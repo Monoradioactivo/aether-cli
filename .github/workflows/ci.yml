@@ -16,11 +16,15 @@ jobs:
   branch-name:
     name: Branch name policy
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'dependabot/')
+    if: github.event_name == 'pull_request'
     steps:
       - name: Validate branch prefix
         run: |
           BRANCH="${{ github.head_ref }}"
+          if [[ "$BRANCH" =~ ^dependabot/ ]]; then
+            echo "Skipping branch name policy for Dependabot branch '$BRANCH'."
+            exit 0
+          fi
           if [[ ! "$BRANCH" =~ ^(feat|fix|chore|refactor|docs)/ ]]; then
             echo "::error::Branch '$BRANCH' must start with feat/, fix/, chore/, refactor/, or docs/"
             exit 1
