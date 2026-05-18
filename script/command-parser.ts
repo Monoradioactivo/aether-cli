@@ -1318,5 +1318,5 @@ function isDefined(object: any): boolean {
 }
 
 function parseDurationMilliseconds(durationString: string): number {
-  return Math.floor(parseDuration(durationString));
+  return Math.floor(parseDuration.default(durationString));
 }
