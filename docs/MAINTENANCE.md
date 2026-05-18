@@ -116,7 +116,8 @@ Jobs:
 - `Branch name policy` — enforces branch prefix convention
 - `Node 18` / `Node 20` / `Node 22` — install, build, typecheck
 
-Lint and test jobs will be added when their infrastructure is in place (phases 6A-4.2 and 6A-4.6 respectively).
+Test infrastructure will be wired up in phase 6A-4.6. Lint config improvements (extending `recommended`, switching to
+TS-aware `no-unused-vars`) tracked as backlog.
 
 ## Required reviewers
 
