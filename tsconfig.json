@@ -1,13 +1,17 @@
 {
-    "compilerOptions": {
-      "module": "commonjs",
-      "noImplicitAny": false,
-      "target": "ES2022",
-      "outDir": "./bin",
-      "skipLibCheck": true,
-    },
-    "exclude": [
-      "./bin",
-      "./node_modules"
-    ]
-  }
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "outDir": "./bin",
+    "rootDir": "./",
+    "esModuleInterop": false,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "noImplicitAny": false
+  },
+  "include": ["script/**/*.ts"],
+  "exclude": ["bin", "node_modules", "test"]
+}
