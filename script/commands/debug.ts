@@ -12,7 +12,7 @@ const which = require("which");
 
 interface IDebugPlatform {
   getLogProcess(): any;
-  normalizeLogMessage(message: string): string;
+  normalizeLogMessage(_message: string): string;
 }
 
 class AndroidDebugPlatform implements IDebugPlatform {
@@ -48,7 +48,7 @@ class AndroidDebugPlatform implements IDebugPlatform {
   private getNumberOfAvailableDevices(): number {
     const output = childProcess.execSync("adb devices").toString();
     const matches = output.match(/\b(device)\b/gim);
-    if (matches != null) {
+    if (matches !== null) {
       return matches.length;
     }
     return 0;
