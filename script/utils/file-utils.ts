@@ -14,7 +14,7 @@ export function isDirectory(path: string): boolean {
 export function fileExists(file: string): boolean {
   try {
     return fs.statSync(file).isFile();
-  } catch (e) {
+  } catch (_e) {
     return false;
   }
 };
@@ -35,7 +35,7 @@ export function copyFileToTmpDir(filePath: string): string {
 export function fileDoesNotExistOrIsDirectory(path: string): boolean {
   try {
     return isDirectory(path);
-  } catch (error) {
+  } catch (_error) {
     return true;
   }
 }
