@@ -33,6 +33,19 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      - dependency-name: "eslint"
+        update-types: [ "version-update:semver-major" ]
+      - dependency-name: "chalk"
+        update-types: [ "version-update:semver-major" ]
+      - dependency-name: "prettier"
+        update-types: [ "version-update:semver-major" ]
+      - dependency-name: "yargs"
+        update-types: [ "version-update:semver-major" ]
+      - dependency-name: "rimraf"
+        update-types: [ "version-update:semver-major" ]
+      - dependency-name: "superagent"
+        update-types: [ "version-update:semver-major" ]
 
   - package-ecosystem: github-actions
     directory: /
