@@ -1,23 +1,53 @@
 {
-  "name": "code-push-cli",
-  "version": "0.0.1",
-  "description": "Management CLI for the CodePush service",
-  "main": "./script/cli.js",
+  "name": "@aetherpush/cli",
+  "version": "0.1.0",
+  "description": "Command-line interface for Aether — over-the-air updates for React Native apps.",
+  "main": "./bin/script/index.js",
+  "types": "./bin/script/index.d.ts",
   "scripts": {
     "start": "node ./bin/script/cli.js",
     "build": "tsc",
+    "clean": "rimraf bin",
+    "typecheck": "tsc --noEmit",
     "prettier": "prettier --write \"./**/*.ts\"",
     "lint": "npx eslint ./script/**/*.ts",
     "lint:fix": "npx eslint ./script/**/*.ts --fix"
   },
   "bin": {
-    "code-push-standalone": "./bin/script/cli.js"
+    "aether": "./bin/script/cli.js"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/microsoft/code-push-server"
+    "url": "git+https://github.com/Monoradioactivo/aether-cli.git"
   },
-  "author": "Microsoft",
+  "author": "Aether",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Monoradioactivo/aether-cli/issues"
+  },
+  "homepage": "https://github.com/Monoradioactivo/aether-cli#readme",
+  "keywords": [
+    "aether",
+    "aetherpush",
+    "react-native",
+    "ota",
+    "codepush",
+    "cli",
+    "deployment",
+    "updates"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dependencies": {
     "backslash": "^0.2.0",
     "chalk": "^4.1.2",
