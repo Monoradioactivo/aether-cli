@@ -1,5 +1,4 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT License.
+// Copyright (c) Aether. All rights reserved.
 
 import * as express from "express";
 import * as querystring from "querystring";

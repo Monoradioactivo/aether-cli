@@ -1,5 +1,4 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT License.
+// Copyright (c) Aether. All rights reserved.
 
 import AccountManager = require("./management-sdk");
 const childProcess = require("child_process");

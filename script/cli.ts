@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT License.
+// Copyright (c) Aether. All rights reserved.
 
 import * as parser from "./command-parser";
 import * as execute from "./command-executor";

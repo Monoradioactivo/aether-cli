@@ -1,5 +1,4 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT License.
+// Copyright (c) Aether. All rights reserved.
 
 /**
  * NOTE!!! This utility file is duplicated for use by the CodePush service (for server-driven hashing/
