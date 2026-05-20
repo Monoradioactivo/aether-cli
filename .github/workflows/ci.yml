@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [ 18, 20, 22 ]
+        node: [ 22, 24 ]
     steps:
       - uses: actions/checkout@v6
 
@@ -55,3 +55,6 @@ jobs:
 
       - name: Build and typecheck
         run: npm run build
+
+      - name: Test
+        run: npm test
