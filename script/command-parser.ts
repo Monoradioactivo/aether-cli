@@ -19,8 +19,12 @@ let wasHelpShown = false;
 export function showHelp(showRootDescription?: boolean): void {
   if (!wasHelpShown) {
     if (showRootDescription) {
-      console.log(chalk.cyan("Aether CLI v" + packageJson.version));
-      console.log(chalk.cyan("================"));
+      console.log(chalk.bold.cyan(" █████╗ ███████╗████████╗██╗  ██╗███████╗██████╗ "));
+      console.log(chalk.bold.cyan("██╔══██╗██╔════╝╚══██╔══╝██║  ██║██╔════╝██╔══██╗"));
+      console.log(chalk.bold.cyan("███████║█████╗     ██║   ███████║█████╗  ██████╔╝"));
+      console.log(chalk.bold.cyan("██╔══██║██╔══╝     ██║   ██╔══██║██╔══╝  ██╔══██╗"));
+      console.log(chalk.bold.cyan("██║  ██║███████╗   ██║   ██║  ██║███████╗██║  ██║"));
+      console.log(chalk.bold.cyan("╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝") + chalk.dim("    CLI v" + packageJson.version));
       console.log("");
       console.log("Aether is a service that lets you deploy React Native app updates directly to users' devices.\n");
     }
