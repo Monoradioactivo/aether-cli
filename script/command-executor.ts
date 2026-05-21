@@ -22,32 +22,23 @@ import wordwrap = require("wordwrap");
 import * as cli from "../script/types/cli";
 import sign from "./sign";
 const xcode = require("xcode");
+import { AetherError } from "./errors";
 import {
   AccessKey,
+  AccessKeyWithSecret,
   Account,
   App,
-  CodePushError,
   CollaboratorMap,
   CollaboratorProperties,
   Deployment,
   DeploymentMetrics,
-  Headers,
   Package,
   PackageInfo,
   Session,
   UpdateMetrics,
 } from "../script/types";
-import {
-  getAndroidHermesEnabled,
-  getiOSHermesEnabled,
-  runHermesEmitBinaryCommand,
-  isValidVersion
-} from "./react-native-utils";
-import {
-  fileDoesNotExistOrIsDirectory,
-  isBinaryOrZip,
-  fileExists
-} from "./utils/file-utils";
+import { getAndroidHermesEnabled, getiOSHermesEnabled, runHermesEmitBinaryCommand, isValidVersion } from "./react-native-utils";
+import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./utils/file-utils";
 
 const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".code-push.config");
 const emailValidator = require("email-validator");
@@ -56,8 +47,8 @@ const parseXml = Q.denodeify(require("xml2js").parseString);
 import Promise = Q.Promise;
 const properties = require("properties");
 
-const CLI_HEADERS: Headers = {
-  "X-CodePush-CLI-Version": packageJson.version,
+const CLI_HEADERS: Record<string, string> = {
+  "X-Aether-CLI-Version": packageJson.version,
 };
 
 /** Deprecated */
@@ -120,8 +111,8 @@ export const confirm = (message: string = "Are you sure?"): Promise<boolean> => 
 };
 
 function accessKeyAdd(command: cli.IAccessKeyAddCommand): Promise<void> {
-  return sdk.addAccessKey(command.name, command.ttl).then((accessKey: AccessKey) => {
-    log(`Successfully created the "${command.name}" access key: ${accessKey.key}`);
+  return sdk.addAccessKey(command.name, command.ttl).then((accessKey: AccessKeyWithSecret) => {
+    log(`Successfully created the "${command.name}" access key: ${accessKey.name}`);
     log("Make sure to save this key value somewhere safe, since you won't be able to view it from the CLI again!");
   });
 }
@@ -630,9 +621,9 @@ function logout(command: cli.ICommand): Promise<void> {
     .then((): Promise<void> => {
       if (!connectionInfo.preserveAccessKeyOnLogout) {
         const machineName: string = os.hostname();
-        return sdk.removeSession(machineName).catch((error: CodePushError) => {
+        return sdk.removeSessions(machineName).catch((error: AetherError) => {
           // If we are not authenticated or the session doesn't exist anymore, just swallow the error instead of displaying it
-          if (error.statusCode !== AccountManager.ERROR_UNAUTHORIZED && error.statusCode !== AccountManager.ERROR_NOT_FOUND) {
+          if (error.statusCode !== 401 && error.statusCode !== 404) {
             throw error;
           }
         });
@@ -1080,11 +1071,7 @@ function getAppVersionFromXcodeProject(command: cli.IReleaseReactCommand, projec
   }
 
   const xcodeProj = xcode.project(resolvedPbxprojFile).parseSync();
-  const marketingVersion = xcodeProj.getBuildProperty(
-    "MARKETING_VERSION",
-    command.buildConfigurationName,
-    command.xcodeTargetName
-  );
+  const marketingVersion = xcodeProj.getBuildProperty("MARKETING_VERSION", command.buildConfigurationName, command.xcodeTargetName);
   if (!isValidVersion(marketingVersion)) {
     throw new Error(
       `The "MARKETING_VERSION" key in the "${resolvedPbxprojFile}" file needs to specify a valid semver string, containing both a major and minor version (e.g. 1.3.2, 1.1).`
@@ -1111,7 +1098,7 @@ function printAccessKeys(format: string, keys: AccessKey[]): void {
       }
 
       function keyToTableRow(key: AccessKey, dim: boolean): string[] {
-        const row: string[] = [key.name, key.createdTime ? formatDate(key.createdTime) : "", formatDate(key.expires)];
+        const row: string[] = [key.friendlyName, key.createdTime ? formatDate(key.createdTime) : "", formatDate(key.expires)];
 
         if (dim) {
           row.forEach((col: string, index: number) => {
@@ -1132,8 +1119,8 @@ function printSessions(format: string, sessions: Session[]): void {
   if (format === "json") {
     printJson(sessions);
   } else if (format === "table") {
-    printTable(["Machine", "Logged in"], (dataSource: any[]): void => {
-      sessions.forEach((session: Session) => dataSource.push([session.machineName, formatDate(session.loggedInTime)]));
+    printTable(["Created From", "Logged in"], (dataSource: any[]): void => {
+      sessions.forEach((session: Session) => dataSource.push([session.createdBy, formatDate(session.loggedInTime)]));
     });
   }
 }
@@ -1178,7 +1165,7 @@ function promote(command: cli.IPromoteCommand): Promise<void> {
           '" deployment.'
       );
     })
-    .catch((err: CodePushError) => releaseErrorHandler(err, command));
+    .catch((err: AetherError) => releaseErrorHandler(err, command));
 }
 
 function patch(command: cli.IPatchCommand): Promise<void> {
@@ -1220,19 +1207,6 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
     isSingleFilePackage = false;
   }
 
-  let lastTotalProgress = 0;
-  const progressBar = new progress("Upload progress:[:bar] :percent :etas", {
-    complete: "=",
-    incomplete: " ",
-    width: 50,
-    total: 100,
-  });
-
-  const uploadProgress = (currentProgress: number): void => {
-    progressBar.tick(currentProgress - lastTotalProgress);
-    lastTotalProgress = currentProgress;
-  };
-
   const updateMetadata: PackageInfo = {
     description: command.description,
     isDisabled: command.disabled,
@@ -1242,8 +1216,9 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
 
   return sdk
     .isAuthenticated(true)
-    .then((isAuth: boolean): Promise<void> => {
-      return sdk.release(command.appName, command.deploymentName, filePath, command.appStoreVersion, updateMetadata, uploadProgress);
+    .then((isAuth: boolean) => {
+      log("Uploading release package...");
+      return sdk.release(command.appName, command.deploymentName, filePath, command.appStoreVersion, updateMetadata);
     })
     .then((): void => {
       log(
@@ -1258,7 +1233,7 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
           '" app.'
       );
     })
-    .catch((err: CodePushError) => releaseErrorHandler(err, command));
+    .catch((err: AetherError) => releaseErrorHandler(err, command));
 };
 
 export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> => {
@@ -1352,9 +1327,9 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
       )
       .then(async () => {
         const isHermesEnabled =
-        command.useHermes ||
-        (platform === "android" && (await getAndroidHermesEnabled(command.gradleFile))) || // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in build.gradle and we're releasing an Android build
-        (platform === "ios" && (await getiOSHermesEnabled(command.podFile))); // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in Podfile and we're releasing an iOS build
+          command.useHermes ||
+          (platform === "android" && (await getAndroidHermesEnabled(command.gradleFile))) || // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in build.gradle and we're releasing an Android build
+          (platform === "ios" && (await getiOSHermesEnabled(command.podFile))); // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in Podfile and we're releasing an iOS build
 
         if (isHermesEnabled) {
           log(chalk.cyan("\nRunning hermes compiler...\n"));
@@ -1524,7 +1499,7 @@ function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   } else {
     return confirm().then((wasConfirmed: boolean): Promise<void> => {
       if (wasConfirmed) {
-        return sdk.removeSession(command.machineName).then((): void => {
+        return sdk.removeSessions(command.machineName).then((): void => {
           log(`Successfully removed the login session for "${command.machineName}".`);
         });
       }
@@ -1534,8 +1509,8 @@ function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   }
 }
 
-function releaseErrorHandler(error: CodePushError, command: cli.ICommand): void {
-  if ((<any>command).noDuplicateReleaseError && error.statusCode === AccountManager.ERROR_CONFLICT) {
+function releaseErrorHandler(error: AetherError, command: cli.ICommand): void {
+  if ((<any>command).noDuplicateReleaseError && error.statusCode === 409) {
     console.warn(chalk.yellow("[Warning] " + error.message));
   } else {
     throw error;
@@ -1577,7 +1552,7 @@ function isCommandOptionSpecified(option: any): boolean {
   return option !== undefined && option !== null;
 }
 
-function getSdk(accessKey: string, headers: Headers, customServerUrl: string): AccountManager {
+function getSdk(accessKey: string, headers: Record<string, string>, customServerUrl: string): AccountManager {
   const sdk: any = new AccountManager(accessKey, CLI_HEADERS, customServerUrl);
   /*
    * If the server returns `Unauthorized`, it must be due to an invalid
@@ -1592,7 +1567,7 @@ function getSdk(accessKey: string, headers: Headers, customServerUrl: string): A
         let maybePromise: Promise<any> = originalFunction.apply(sdk, arguments);
         if (maybePromise && maybePromise.then !== undefined) {
           maybePromise = maybePromise.catch((error: any) => {
-            if (error.statusCode && error.statusCode === AccountManager.ERROR_UNAUTHORIZED) {
+            if (error.statusCode && error.statusCode === 401) {
               deleteConnectionInfoCache(/* printMessage */ false);
             }
 
