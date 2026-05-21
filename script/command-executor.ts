@@ -7,7 +7,6 @@ import * as fs from "fs";
 import * as chalk from "chalk";
 const g2js = require("gradle-to-js/lib/parser");
 import * as moment from "moment";
-const opener = require("opener");
 import * as os from "os";
 import * as path from "path";
 const plist = require("plist");
@@ -40,7 +39,8 @@ import {
 import { getAndroidHermesEnabled, getiOSHermesEnabled, runHermesEmitBinaryCommand, isValidVersion } from "./react-native-utils";
 import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./utils/file-utils";
 
-const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".code-push.config");
+const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".aether", "config.json");
+const DEFAULT_AETHER_SERVER_URL = "https://api-staging.aetherpush.com";
 const emailValidator = require("email-validator");
 const packageJson = require("../../package.json");
 const parseXml = promisify(require("xml2js").parseString);
@@ -442,9 +442,7 @@ export function execute(command: cli.ICommand) {
         if (!!sdk) break; // Used by unit tests to skip authentication
 
         if (!connectionInfo) {
-          throw new Error(
-            "You are not currently logged in. Run the 'code-push-standalone login' command to authenticate with the CodePush server."
-          );
+          throw new Error("You are not currently logged in. Run 'aether login' to authenticate with Aether.");
         }
 
         sdk = getSdk(connectionInfo.accessKey, CLI_HEADERS, connectionInfo.customServerUrl);
@@ -561,77 +559,67 @@ function getTotalActiveFromDeploymentMetrics(metrics: DeploymentMetrics): number
   return totalActive;
 }
 
-function initiateExternalAuthenticationAsync(action: string, serverUrl?: string): void {
-  const message: string =
-    `A browser is being launched to authenticate your account. Follow the instructions ` +
-    `it displays to complete your ${action === "register" ? "registration" : action}.`;
-
-  log(message);
-  const hostname: string = os.hostname();
-  const url: string = `${serverUrl || "https://api-staging.aetherpush.com"}/auth/${action}?hostname=${hostname}`;
-  opener(url);
-}
-
 function link(command: cli.ILinkCommand): Promise<void> {
-  initiateExternalAuthenticationAsync("link", command.serverUrl);
+  log(
+    chalk.yellow(
+      "The 'aether link' command has been removed. To add a teammate to an app, use 'aether collaborator add <appName> <email>' instead."
+    )
+  );
   return Promise.resolve();
 }
 
-function login(command: cli.ILoginCommand): Promise<void> {
-  // Check if one of the flags were provided.
+async function login(command: cli.ILoginCommand): Promise<void> {
+  const serverUrl = command.serverUrl || DEFAULT_AETHER_SERVER_URL;
+
   if (command.accessKey) {
-    sdk = getSdk(command.accessKey, CLI_HEADERS, command.serverUrl);
-    return sdk.isAuthenticated().then((isAuthenticated: boolean): void => {
-      if (isAuthenticated) {
-        serializeConnectionInfo(command.accessKey, /*preserveAccessKeyOnLogout*/ true, command.serverUrl);
-      } else {
-        throw new Error("Invalid access key.");
-      }
-    });
-  } else {
-    return loginWithExternalAuthentication("login", command.serverUrl);
-  }
-}
-
-function loginWithExternalAuthentication(action: string, serverUrl?: string): Promise<void> {
-  initiateExternalAuthenticationAsync(action, serverUrl);
-  log(""); // Insert newline
-
-  return requestAccessKey().then((accessKey) => {
-    if (accessKey === null) {
-      // The user has aborted the synchronous prompt (e.g.:  via [CTRL]+[C]).
-      return;
+    sdk = getSdk(command.accessKey, CLI_HEADERS, serverUrl);
+    const authenticated = await sdk.isAuthenticated();
+    if (!authenticated) {
+      throw new Error("Invalid access key.");
     }
+    serializeConnectionInfo(command.accessKey, /*preserveAccessKeyOnLogout*/ true, serverUrl);
+    return;
+  }
 
-    sdk = getSdk(accessKey, CLI_HEADERS, serverUrl);
+  const { email, password } = await promptForLoginCredentials();
+  if (!email) {
+    throw new Error("Email is required.");
+  }
+  if (!password) {
+    throw new Error("Password is required.");
+  }
 
-    return sdk.isAuthenticated().then((isAuthenticated: boolean): void => {
-      if (isAuthenticated) {
-        serializeConnectionInfo(accessKey, /*preserveAccessKeyOnLogout*/ false, serverUrl);
-      } else {
-        throw new Error("Invalid access key.");
-      }
+  const url = serverUrl.replace(/\/$/, "") + "/v1/auth/login";
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email, password }),
     });
-  });
+  } catch (err) {
+    throw new Error(`Unable to reach Aether at ${serverUrl}. Are you offline, or behind a firewall or proxy?`);
+  }
+
+  const body: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error || body.message || `Login failed (HTTP ${res.status}).`);
+  }
+
+  const accessKey: string = body.accessKey;
+  if (!accessKey) {
+    throw new Error("Server returned an empty access key.");
+  }
+
+  sdk = getSdk(accessKey, CLI_HEADERS, serverUrl);
+  serializeConnectionInfo(accessKey, /*preserveAccessKeyOnLogout*/ false, serverUrl);
+  log(chalk.green(`Successfully logged in as ${email}.`));
 }
 
 function logout(command: cli.ICommand): Promise<void> {
-  return Promise.resolve()
-    .then(() => {
-      if (!connectionInfo.preserveAccessKeyOnLogout) {
-        const machineName: string = os.hostname();
-        return sdk.removeSessions(machineName).catch((error: AetherError) => {
-          // If we are not authenticated or the session doesn't exist anymore, just swallow the error instead of displaying it
-          if (error.statusCode !== 401 && error.statusCode !== 404) {
-            throw error;
-          }
-        });
-      }
-    })
-    .then((): void => {
-      sdk = null;
-      deleteConnectionInfoCache();
-    });
+  sdk = null;
+  deleteConnectionInfoCache();
+  return Promise.resolve();
 }
 
 function formatDate(unixOffset: number): string {
@@ -1135,8 +1123,50 @@ function printTable(columnNames: string[], readData: (dataSource: any[]) => void
   log(table.toString());
 }
 
-function register(command: cli.IRegisterCommand): Promise<void> {
-  return loginWithExternalAuthentication("register", command.serverUrl);
+async function register(command: cli.IRegisterCommand): Promise<void> {
+  const serverUrl = command.serverUrl || DEFAULT_AETHER_SERVER_URL;
+  const { email, name, password, confirmPassword } = await promptForRegistration();
+
+  if (!email) {
+    throw new Error("Email is required.");
+  }
+  if (!password) {
+    throw new Error("Password is required.");
+  }
+  if (password !== confirmPassword) {
+    throw new Error("Passwords do not match.");
+  }
+
+  const reqBody: { email: string; password: string; name?: string } = { email, password };
+  if (name) {
+    reqBody.name = name;
+  }
+
+  const url = serverUrl.replace(/\/$/, "") + "/v1/auth/register";
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(reqBody),
+    });
+  } catch (err) {
+    throw new Error(`Unable to reach Aether at ${serverUrl}. Are you offline, or behind a firewall or proxy?`);
+  }
+
+  const body: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (Array.isArray(body.errors) && body.errors.length > 0) {
+      const lines = body.errors
+        .map((e: any) => (e && typeof e === "object" ? e.message || JSON.stringify(e) : String(e)))
+        .join("\n  ");
+      throw new Error(`Registration failed:\n  ${lines}`);
+    }
+    throw new Error(body.error || body.message || `Registration failed (HTTP ${res.status}).`);
+  }
+
+  log(chalk.green(`Account created for ${email}.`));
+  log(`Check your inbox for a verification link, then run ${chalk.cyan("aether login")} to sign in.`);
 }
 
 function promote(command: cli.IPromoteCommand): Promise<void> {
@@ -1380,27 +1410,65 @@ function rollback(command: cli.IRollbackCommand): Promise<void> {
   });
 }
 
-function requestAccessKey(): Promise<string | null> {
-  return new Promise<string | null>((resolve, reject): void => {
+function promptForLoginCredentials(): Promise<{ email: string; password: string }> {
+  return new Promise((resolve, reject) => {
     prompt.message = "";
     prompt.delimiter = "";
-
     prompt.start();
-
     prompt.get(
       {
         properties: {
-          response: {
-            description: chalk.cyan("Enter your access key: "),
+          email: { description: chalk.cyan("Email: ") },
+          password: { description: chalk.cyan("Password: "), hidden: true, replace: "*" },
+        },
+      },
+      (err: any, result: any) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve({
+          email: (result.email || "").toString().trim(),
+          password: (result.password || "").toString(),
+        });
+      }
+    );
+  });
+}
+
+function promptForRegistration(): Promise<{ email: string; name: string; password: string; confirmPassword: string }> {
+  return new Promise((resolve, reject) => {
+    prompt.message = "";
+    prompt.delimiter = "";
+    prompt.start();
+    prompt.get(
+      {
+        properties: {
+          email: { description: chalk.cyan("Email: ") },
+          name: { description: chalk.cyan("Name (optional): "), default: "" },
+          password: {
+            description: chalk.cyan("Password (min 12 characters): "),
+            hidden: true,
+            replace: "*",
+          },
+          confirmPassword: {
+            description: chalk.cyan("Confirm password: "),
+            hidden: true,
+            replace: "*",
           },
         },
       },
-      (err: any, result: any): void => {
+      (err: any, result: any) => {
         if (err) {
-          resolve(null);
-        } else {
-          resolve(result.response.trim());
+          reject(err);
+          return;
         }
+        resolve({
+          email: (result.email || "").toString().trim(),
+          name: (result.name || "").toString().trim(),
+          password: (result.password || "").toString(),
+          confirmPassword: (result.confirmPassword || "").toString(),
+        });
       }
     );
   });
@@ -1475,13 +1543,14 @@ function serializeConnectionInfo(accessKey: string, preserveAccessKeyOnLogout: b
   }
 
   fs.mkdirSync(path.dirname(configFilePath), { recursive: true });
+  fs.mkdirSync(path.dirname(configFilePath), { recursive: true });
   const json: string = JSON.stringify(connectionInfo);
   fs.writeFileSync(configFilePath, json, { encoding: "utf8" });
 
   log(
-    `\r\nSuccessfully logged-in. Your session file was written to ${chalk.cyan(configFilePath)}. You can run the ${chalk.cyan(
-      "code-push logout"
-    )} command at any time to delete this file and terminate your session.\r\n`
+    `\r\nSuccessfully logged in. Your session file was written to ${chalk.cyan(configFilePath)}. Run ${chalk.cyan(
+      "aether logout"
+    )} at any time to delete this file and terminate your session.\r\n`
   );
 }
 
@@ -1495,7 +1564,7 @@ function sessionList(command: cli.ISessionListCommand): Promise<void> {
 
 function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   if (os.hostname() === command.machineName) {
-    throw new Error("Cannot remove the current login session via this command. Please run 'code-push-standalone logout' instead.");
+    throw new Error("Cannot remove the current login session via this command. Please run 'aether logout' instead.");
   } else {
     return confirm().then((wasConfirmed: boolean) => {
       if (wasConfirmed) {
