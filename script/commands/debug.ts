@@ -26,7 +26,7 @@ class AndroidDebugPlatform implements IDebugPlatform {
     }
 
     // For now there is no ability to specify device for debug like:
-    // code-push debug android "192.168.121.102:5555"
+    // aether debug android "192.168.121.102:5555"
     // So we have to throw an error in case more than 1 android device was attached
     // otherwise we will very likely run into an exception while trying to read ‘adb logcat’ from device which codepushified app is not running on.
     if (numberOfAvailableDevices > 1) {
@@ -94,6 +94,9 @@ class iOSDebugPlatform implements IDebugPlatform {
   }
 }
 
+// TODO(7A): once the Aether SDK ships, accept both "[Aether] " and
+// "[CodePush] " prefixes to support apps mid-migration. For now this
+// matches only the react-native-code-push prefix.
 const logMessagePrefix = "[CodePush] ";
 
 function processLogData(logData: Buffer) {

@@ -110,7 +110,7 @@ export async function runHermesEmitBinaryCommand(
           reject(new Error(`"compose-source-maps" command failed (exitCode=${exitCode}, signal=${signal}).`));
         }
 
-        // Delete the HBC sourceMap, otherwise it will be included in 'code-push' bundle as well
+        // Delete the HBC sourceMap, otherwise it will be included in the Aether bundle as well
         fs.unlink(jsCompilerSourceMapFile, (err) => {
           if (err) {
             console.error(err);

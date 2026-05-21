@@ -5,6 +5,9 @@ import * as jwt from "jsonwebtoken";
 import { copyFileToTmpDir, isDirectory } from "./utils/file-utils";
 
 const CURRENT_CLAIM_VERSION: string = "1.0.0";
+// TODO(7A): rename to ".aetherrelease" when the Aether SDK ships.
+// Keep ".codepushrelease" for now to maintain compatibility with
+// react-native-code-push apps deploying against Aether servers.
 const METADATA_FILE_NAME: string = ".codepushrelease";
 
 interface CodeSigningClaims {
@@ -25,7 +28,7 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
     return Promise.reject(new Error(`The path specified for the signing key ("${privateKeyPath}") was not valid.`));
   }
 
-  // If releasing a single file, copy the file to a temporary 'CodePush' directory in which to publish the release
+  // If releasing a single file, copy the file to a temporary 'Aether' directory in which to publish the release
   try {
     if (!isDirectory(updateContentsPath)) {
       updateContentsPath = copyFileToTmpDir(updateContentsPath);
