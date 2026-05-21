@@ -4,8 +4,6 @@ import * as childProcess from "child_process";
 import * as cli from "../../script/types/cli";
 import * as moment from "moment";
 import * as path from "path";
-import * as Q from "q";
-
 const simctl = require("simctl");
 const which = require("which");
 
@@ -97,8 +95,10 @@ class iOSDebugPlatform implements IDebugPlatform {
 }
 
 const logMessagePrefix = "[CodePush] ";
+
 function processLogData(logData: Buffer) {
   const content = logData.toString();
+
   content
     .split("\n")
     .filter((line: string) => line.indexOf(logMessagePrefix) > -1)
@@ -122,8 +122,8 @@ const debugPlatforms: any = {
   ios: new iOSDebugPlatform(),
 };
 
-export default function (command: cli.IDebugCommand): Q.Promise<void> {
-  return Q.Promise<void>((resolve, reject) => {
+export default function (command: cli.IDebugCommand): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const platform: string = command.platform.toLowerCase();
     const debugPlatform: IDebugPlatform = debugPlatforms[platform];
 
@@ -138,7 +138,6 @@ export default function (command: cli.IDebugCommand): Q.Promise<void> {
 
       logProcess.stdout.on("data", processLogData.bind(debugPlatform));
       logProcess.stderr.on("data", reject);
-
       logProcess.on("close", resolve);
     } catch (e) {
       reject(e);

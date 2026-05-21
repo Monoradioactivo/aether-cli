@@ -13,7 +13,6 @@ import * as path from "path";
 const plist = require("plist");
 const progress = require("progress");
 const prompt = require("prompt");
-import * as Q from "q";
 const rimraf = require("rimraf");
 import * as semver from "semver";
 const Table = require("cli-table");
@@ -22,6 +21,7 @@ import wordwrap = require("wordwrap");
 import * as cli from "../script/types/cli";
 import sign from "./sign";
 const xcode = require("xcode");
+import { promisify } from "util";
 import { AetherError } from "./errors";
 import {
   AccessKey,
@@ -43,8 +43,7 @@ import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./util
 const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".code-push.config");
 const emailValidator = require("email-validator");
 const packageJson = require("../../package.json");
-const parseXml = Q.denodeify(require("xml2js").parseString);
-import Promise = Q.Promise;
+const parseXml = promisify(require("xml2js").parseString);
 const properties = require("properties");
 
 const CLI_HEADERS: Record<string, string> = {
@@ -79,7 +78,7 @@ let connectionInfo: ILoginConnectionInfo;
 
 export const confirm = (message: string = "Are you sure?"): Promise<boolean> => {
   message += " (y/N):";
-  return Promise<boolean>((resolve, reject, notify): void => {
+  return new Promise<boolean>((resolve, reject): void => {
     prompt.message = "";
     prompt.delimiter = "";
 
@@ -153,7 +152,7 @@ function accessKeyList(command: cli.IAccessKeyListCommand): Promise<void> {
 }
 
 function accessKeyRemove(command: cli.IAccessKeyRemoveCommand): Promise<void> {
-  return confirm().then((wasConfirmed: boolean): Promise<void> => {
+  return confirm().then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeAccessKey(command.accessKey).then((): void => {
         log(`Successfully removed the "${command.accessKey}" access key.`);
@@ -187,7 +186,7 @@ function appList(command: cli.IAppListCommand): Promise<void> {
 
 function appRemove(command: cli.IAppRemoveCommand): Promise<void> {
   return confirm("Are you sure you want to remove this app? Note that its deployment keys will be PERMANENTLY unrecoverable.").then(
-    (wasConfirmed: boolean): Promise<void> => {
+    (wasConfirmed: boolean) => {
       if (wasConfirmed) {
         return sdk.removeApp(command.appName).then((): void => {
           log('Successfully removed the "' + command.appName + '" app.');
@@ -214,7 +213,7 @@ export const createEmptyTempReleaseFolder = (folderPath: string) => {
 function appTransfer(command: cli.IAppTransferCommand): Promise<void> {
   throwForInvalidEmail(command.email);
 
-  return confirm().then((wasConfirmed: boolean): Promise<void> => {
+  return confirm().then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.transferApp(command.appName, command.email).then((): void => {
         log(
@@ -246,7 +245,7 @@ function listCollaborators(command: cli.ICollaboratorListCommand): Promise<void>
 function removeCollaborator(command: cli.ICollaboratorRemoveCommand): Promise<void> {
   throwForInvalidEmail(command.email);
 
-  return confirm().then((wasConfirmed: boolean): Promise<void> => {
+  return confirm().then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeCollaborator(command.appName, command.email).then((): void => {
         log('Successfully removed "' + command.email + '" as a collaborator from the app "' + command.appName + '".');
@@ -268,12 +267,12 @@ function deleteConnectionInfoCache(printMessage: boolean = true): void {
 }
 
 function deleteFolder(folderPath: string): Promise<void> {
-  return Promise<void>((resolve, reject, notify) => {
+  return new Promise<void>((resolve, reject) => {
     rimraf(folderPath, (err: any) => {
       if (err) {
         reject(err);
       } else {
-        resolve(<void>null);
+        resolve();
       }
     });
   });
@@ -294,7 +293,7 @@ function deploymentAdd(command: cli.IDeploymentAddCommand): Promise<void> {
 }
 
 function deploymentHistoryClear(command: cli.IDeploymentHistoryClearCommand): Promise<void> {
-  return confirm().then((wasConfirmed: boolean): Promise<void> => {
+  return confirm().then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.clearDeploymentHistory(command.appName, command.deploymentName).then((): void => {
         log(
@@ -335,11 +334,11 @@ export const deploymentList = (command: cli.IDeploymentListCommand, showPackage:
               }
             });
           } else {
-            return Q(<void>null);
+            return Promise.resolve();
           }
         });
 
-        return Q.all(metricsPromises);
+        return Promise.all(metricsPromises).then(() => undefined);
       }
     })
     .then(() => {
@@ -350,7 +349,7 @@ export const deploymentList = (command: cli.IDeploymentListCommand, showPackage:
 function deploymentRemove(command: cli.IDeploymentRemoveCommand): Promise<void> {
   return confirm(
     "Are you sure you want to remove this deployment? Note that its deployment key will be PERMANENTLY unrecoverable."
-  ).then((wasConfirmed: boolean): Promise<void> => {
+  ).then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeDeployment(command.appName, command.deploymentName).then((): void => {
         log('Successfully removed the "' + command.deploymentName + '" deployment from the "' + command.appName + '" app.');
@@ -378,11 +377,11 @@ function deploymentRename(command: cli.IDeploymentRenameCommand): Promise<void> 
 function deploymentHistory(command: cli.IDeploymentHistoryCommand): Promise<void> {
   throwForInvalidOutputFormat(command.format);
 
-  return Q.all<any>([
+  return Promise.all([
     sdk.getAccountInfo(),
     sdk.getDeploymentHistory(command.appName, command.deploymentName),
     sdk.getDeploymentMetrics(command.appName, command.deploymentName),
-  ]).spread<void>((account: Account, deploymentHistory: Package[], metrics: DeploymentMetrics): void => {
+  ]).then(([account, deploymentHistory, metrics]) => {
     const totalActive: number = getTotalActiveFromDeploymentMetrics(metrics);
     deploymentHistory.forEach((packageObject: Package) => {
       if (metrics[packageObject.label]) {
@@ -424,7 +423,7 @@ function deserializeConnectionInfo(): ILoginConnectionInfo {
 export function execute(command: cli.ICommand) {
   connectionInfo = deserializeConnectionInfo();
 
-  return Q(<void>null).then(() => {
+  return Promise.resolve().then(() => {
     switch (command.type) {
       // Must not be logged in
       case cli.CommandType.login:
@@ -569,13 +568,13 @@ function initiateExternalAuthenticationAsync(action: string, serverUrl?: string)
 
   log(message);
   const hostname: string = os.hostname();
-  const url: string = `${serverUrl || AccountManager.SERVER_URL}/auth/${action}?hostname=${hostname}`;
+  const url: string = `${serverUrl || "https://api-staging.aetherpush.com"}/auth/${action}?hostname=${hostname}`;
   opener(url);
 }
 
 function link(command: cli.ILinkCommand): Promise<void> {
   initiateExternalAuthenticationAsync("link", command.serverUrl);
-  return Q(<void>null);
+  return Promise.resolve();
 }
 
 function login(command: cli.ILoginCommand): Promise<void> {
@@ -598,7 +597,7 @@ function loginWithExternalAuthentication(action: string, serverUrl?: string): Pr
   initiateExternalAuthenticationAsync(action, serverUrl);
   log(""); // Insert newline
 
-  return requestAccessKey().then((accessKey: string): Promise<void> => {
+  return requestAccessKey().then((accessKey) => {
     if (accessKey === null) {
       // The user has aborted the synchronous prompt (e.g.:  via [CTRL]+[C]).
       return;
@@ -617,8 +616,8 @@ function loginWithExternalAuthentication(action: string, serverUrl?: string): Pr
 }
 
 function logout(command: cli.ICommand): Promise<void> {
-  return Q(<void>null)
-    .then((): Promise<void> => {
+  return Promise.resolve()
+    .then(() => {
       if (!connectionInfo.preserveAccessKeyOnLogout) {
         const machineName: string = os.hostname();
         return sdk.removeSessions(machineName).catch((error: AetherError) => {
@@ -895,7 +894,7 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
     if (parsedPlist && parsedPlist.CFBundleShortVersionString) {
       if (isValidVersion(parsedPlist.CFBundleShortVersionString)) {
         log(`Using the target binary version value "${parsedPlist.CFBundleShortVersionString}" from "${resolvedPlistFile}".\n`);
-        return Q(parsedPlist.CFBundleShortVersionString);
+        return Promise.resolve(parsedPlist.CFBundleShortVersionString);
       } else {
         if (parsedPlist.CFBundleShortVersionString !== "$(MARKETING_VERSION)") {
           throw new Error(
@@ -1079,7 +1078,7 @@ function getAppVersionFromXcodeProject(command: cli.IReleaseReactCommand, projec
   }
   console.log(`Using the target binary version value "${marketingVersion}" from "${resolvedPbxprojFile}".\n`);
 
-  return marketingVersion;
+  return Promise.resolve(marketingVersion);
 }
 
 function printJson(object: any): void {
@@ -1297,7 +1296,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         }
 
         const appVersionPromise: Promise<string> = command.appStoreVersion
-          ? Q(command.appStoreVersion)
+          ? Promise.resolve(command.appStoreVersion)
           : getReactNativeProjectAppVersion(command, projectName);
 
         if (command.sourcemapOutput && !command.sourcemapOutput.endsWith(".map")) {
@@ -1381,8 +1380,8 @@ function rollback(command: cli.IRollbackCommand): Promise<void> {
   });
 }
 
-function requestAccessKey(): Promise<string> {
-  return Promise<string>((resolve, reject, notify): void => {
+function requestAccessKey(): Promise<string | null> {
+  return new Promise<string | null>((resolve, reject): void => {
     prompt.message = "";
     prompt.delimiter = "";
 
@@ -1447,7 +1446,7 @@ export const runReactNativeBundleCommand = (
   const reactNativeBundleProcess = spawn("node", reactNativeBundleArgs);
   log(`node ${reactNativeBundleArgs.join(" ")}`);
 
-  return Promise<void>((resolve, reject, notify) => {
+  return new Promise<void>((resolve, reject) => {
     reactNativeBundleProcess.stdout.on("data", (data: Buffer) => {
       log(data.toString().trim());
     });
@@ -1461,7 +1460,7 @@ export const runReactNativeBundleCommand = (
         reject(new Error(`"react-native bundle" command exited with code ${exitCode}.`));
       }
 
-      resolve(<void>null);
+      resolve();
     });
   });
 };
@@ -1475,6 +1474,7 @@ function serializeConnectionInfo(accessKey: string, preserveAccessKeyOnLogout: b
     connectionInfo.customServerUrl = customServerUrl;
   }
 
+  fs.mkdirSync(path.dirname(configFilePath), { recursive: true });
   const json: string = JSON.stringify(connectionInfo);
   fs.writeFileSync(configFilePath, json, { encoding: "utf8" });
 
@@ -1497,7 +1497,7 @@ function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   if (os.hostname() === command.machineName) {
     throw new Error("Cannot remove the current login session via this command. Please run 'code-push-standalone logout' instead.");
   } else {
-    return confirm().then((wasConfirmed: boolean): Promise<void> => {
+    return confirm().then((wasConfirmed: boolean) => {
       if (wasConfirmed) {
         return sdk.removeSessions(command.machineName).then((): void => {
           log(`Successfully removed the login session for "${command.machineName}".`);
