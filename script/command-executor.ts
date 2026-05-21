@@ -261,7 +261,7 @@ function deleteConnectionInfoCache(printMessage: boolean = true): void {
     fs.unlinkSync(configFilePath);
 
     if (printMessage) {
-      log(`Successfully logged-out. The session file located at ${chalk.cyan(configFilePath)} has been deleted.\r\n`);
+      log(`Logged out. The session file at ${chalk.cyan(configFilePath)} has been deleted.`);
     }
   } catch (ex) {}
 }
@@ -433,10 +433,6 @@ export function execute(command: cli.ICommand) {
         }
         break;
 
-      // It does not matter whether you are logged in or not
-      case cli.CommandType.link:
-        break;
-
       // Must be logged in
       default:
         if (!!sdk) break; // Used by unit tests to skip authentication
@@ -507,9 +503,6 @@ export function execute(command: cli.ICommand) {
       case cli.CommandType.deploymentRename:
         return deploymentRename(<cli.IDeploymentRenameCommand>command);
 
-      case cli.CommandType.link:
-        return link(<cli.ILinkCommand>command);
-
       case cli.CommandType.login:
         return login(<cli.ILoginCommand>command);
 
@@ -557,15 +550,6 @@ function getTotalActiveFromDeploymentMetrics(metrics: DeploymentMetrics): number
   });
 
   return totalActive;
-}
-
-function link(command: cli.ILinkCommand): Promise<void> {
-  log(
-    chalk.yellow(
-      "The 'aether link' command has been removed. To add a teammate to an app, use 'aether collaborator add <appName> <email>' instead."
-    )
-  );
-  return Promise.resolve();
 }
 
 async function login(command: cli.ILoginCommand): Promise<void> {
@@ -1547,11 +1531,7 @@ function serializeConnectionInfo(accessKey: string, preserveAccessKeyOnLogout: b
   const json: string = JSON.stringify(connectionInfo);
   fs.writeFileSync(configFilePath, json, { encoding: "utf8" });
 
-  log(
-    `\r\nSuccessfully logged in. Your session file was written to ${chalk.cyan(configFilePath)}. Run ${chalk.cyan(
-      "aether logout"
-    )} at any time to delete this file and terminate your session.\r\n`
-  );
+  log(`Session file written to ${chalk.cyan(configFilePath)}. Run ${chalk.cyan("aether logout")} to terminate the session.`);
 }
 
 function sessionList(command: cli.ISessionListCommand): Promise<void> {
@@ -1611,9 +1591,7 @@ function throwForInvalidOutputFormat(format: string): void {
 
 function whoami(command: cli.ICommand): Promise<void> {
   return sdk.getAccountInfo().then((account): void => {
-    const accountInfo = `${account.email} (${account.linkedProviders.join(", ")})`;
-
-    log(accountInfo);
+    log(account.email);
   });
 }
 

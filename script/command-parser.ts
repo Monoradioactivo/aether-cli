@@ -8,7 +8,7 @@ import parseDuration = require("parse-duration");
 
 const packageJson = require("../../package.json");
 const ROLLOUT_PERCENTAGE_REGEX: RegExp = /^(100|[1-9][0-9]|[1-9])%?$/;
-const USAGE_PREFIX = "Usage: code-push-standalone";
+const USAGE_PREFIX = "Usage: aether";
 
 // Command categories are:  access-key, app, release, deployment, deployment-key, login, logout, register
 let isValidCommandCategory = false;
@@ -19,13 +19,10 @@ let wasHelpShown = false;
 export function showHelp(showRootDescription?: boolean): void {
   if (!wasHelpShown) {
     if (showRootDescription) {
-      console.log(chalk.cyan("  _____        __  " + chalk.green("  ___           __ ")));
-      console.log(chalk.cyan(" / ___/__  ___/ /__" + chalk.green(" / _ \\__ _____ / / ")));
-      console.log(chalk.cyan("/ /__/ _ \\/ _  / -_)" + chalk.green(" ___/ // (_-</ _ \\")));
-      console.log(chalk.cyan("\\___/\\___/\\_,_/\\__/" + chalk.green("_/   \\_,_/___/_//_/")) + "    CLI v" + packageJson.version);
-      console.log(chalk.cyan("======================================"));
+      console.log(chalk.cyan("Aether CLI v" + packageJson.version));
+      console.log(chalk.cyan("================"));
       console.log("");
-      console.log("CodePush is a service that enables you to deploy mobile app updates directly to your users' devices.\n");
+      console.log("Aether is a service that lets you deploy React Native app updates directly to users' devices.\n");
     }
 
     yargs.showHelp();
@@ -293,7 +290,7 @@ yargs
 
     addCommonConfiguration(yargs);
   })
-  .command("app", "View and manage your CodePush apps", (yargs: yargs.Argv) => {
+  .command("app", "View and manage your apps", (yargs: yargs.Argv) => {
     isValidCommandCategory = true;
     yargs
       .usage(USAGE_PREFIX + " app <command>")
@@ -355,14 +352,14 @@ yargs
 
     addCommonConfiguration(yargs);
   })
-  .command("debug", "View the CodePush debug logs for a running app", (yargs: yargs.Argv) => {
+  .command("debug", "View the Aether debug logs for a running app", (yargs: yargs.Argv) => {
     isValidCommandCategory = true;
     isValidCommand = true;
     yargs
       .usage(USAGE_PREFIX + " debug <platform>")
       .demand(/*count*/ 1, /*max*/ 1) // Require exactly one non-option arguments
-      .example("debug android", "View the CodePush debug logs for an Android emulator or device")
-      .example("debug ios", "View the CodePush debug logs for the iOS simulator");
+      .example("debug android", "View the Aether debug logs for an Android emulator or device")
+      .example("debug ios", "View the Aether debug logs for the iOS simulator");
 
     addCommonConfiguration(yargs);
   })
@@ -412,34 +409,28 @@ yargs
 
     addCommonConfiguration(yargs);
   })
-  .command("link", "Link an additional authentication provider (e.g. GitHub) to an existing CodePush account", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
-    isValidCommand = true;
-    yargs
-      .usage(USAGE_PREFIX + " link")
-      .demand(/*count*/ 0, /*max*/ 1) //set 'max' to one to allow usage of serverUrl undocument parameter for testing
-      .example("link", "Links an account on the CodePush server")
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
-
-    addCommonConfiguration(yargs);
-  })
-  .command("login", "Authenticate with the CodePush server in order to begin managing your apps", (yargs: yargs.Argv) => {
+  .command("login", "Authenticate with the Aether server to begin managing your apps", (yargs: yargs.Argv) => {
     isValidCommandCategory = true;
     isValidCommand = true;
     yargs
       .usage(USAGE_PREFIX + " login [options]")
-      .demand(/*count*/ 0, /*max*/ 1) //set 'max' to one to allow usage of serverUrl undocument parameter for testing
-      .example("login", "Logs in to the CodePush server")
-      .example("login --accessKey mykey", 'Logs in on behalf of the user who owns and created the access key "mykey"')
+      .demand(/*count*/ 0, /*max*/ 0)
+      .example("login", "Prompts for email and password to log in")
+      .example("login --accessKey mykey", 'Logs in non-interactively using access key "mykey" (for CI/CD)')
       .option("accessKey", {
         alias: "key",
         default: null,
         demand: false,
-        description:
-          "Access key to authenticate against the CodePush server with, instead of providing your username and password credentials",
+        description: "Access key to authenticate non-interactively, instead of email and password",
         type: "string",
       })
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+      .option("serverUrl", {
+        default: null,
+        demand: false,
+        description: "Override the default Aether server URL (advanced)",
+        type: "string",
+      })
+      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand);
 
     addCommonConfiguration(yargs);
   })
@@ -584,14 +575,20 @@ yargs
 
     addCommonConfiguration(yargs);
   })
-  .command("register", "Register a new CodePush account", (yargs: yargs.Argv) => {
+  .command("register", "Register a new Aether account", (yargs: yargs.Argv) => {
     isValidCommandCategory = true;
     isValidCommand = true;
     yargs
       .usage(USAGE_PREFIX + " register")
-      .demand(/*count*/ 0, /*max*/ 1) //set 'max' to one to allow usage of serverUrl undocument parameter for testing
-      .example("register", "Registers a new CodePush account")
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+      .demand(/*count*/ 0, /*max*/ 0)
+      .example("register", "Prompts for email, name, and password to register a new account")
+      .option("serverUrl", {
+        default: null,
+        demand: false,
+        description: "Override the default Aether server URL (advanced)",
+        type: "string",
+      })
+      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand);
 
     addCommonConfiguration(yargs);
   })
@@ -1123,19 +1120,12 @@ export function createCommand(): cli.ICommand {
         }
         break;
 
-      case "link":
-        cmd = <cli.ILinkCommand>{
-          type: cli.CommandType.link,
-          serverUrl: getServerUrl(arg1),
-        };
-        break;
-
       case "login":
         cmd = { type: cli.CommandType.login };
 
         const loginCommand = <cli.ILoginCommand>cmd;
 
-        loginCommand.serverUrl = getServerUrl(arg1);
+        loginCommand.serverUrl = getServerUrl(argv["serverUrl"] as any);
         loginCommand.accessKey = argv["accessKey"] as any;
         break;
 
@@ -1185,7 +1175,7 @@ export function createCommand(): cli.ICommand {
 
         const registerCommand = <cli.IRegisterCommand>cmd;
 
-        registerCommand.serverUrl = getServerUrl(arg1);
+        registerCommand.serverUrl = getServerUrl(argv["serverUrl"] as any);
         break;
 
       case "release":
