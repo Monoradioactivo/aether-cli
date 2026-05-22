@@ -43,7 +43,6 @@ const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env
 const DEFAULT_AETHER_SERVER_URL = "https://api-staging.aetherpush.com";
 const emailValidator = require("email-validator");
 const packageJson = require("../../package.json");
-const parseXml = promisify(require("xml2js").parseString);
 const properties = require("properties");
 
 const CLI_HEADERS: Record<string, string> = {
@@ -981,32 +980,7 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
         return appVersion.toString();
       });
   } else {
-    const appxManifestFileName: string = "Package.appxmanifest";
-    let appxManifestContainingFolder: string;
-    let appxManifestContents: string;
-
-    try {
-      appxManifestContainingFolder = path.join("windows", projectName);
-      appxManifestContents = fs.readFileSync(path.join(appxManifestContainingFolder, "Package.appxmanifest")).toString();
-    } catch (err) {
-      throw new Error(`Unable to find or read "${appxManifestFileName}" in the "${path.join("windows", projectName)}" folder.`);
-    }
-
-    return parseXml(appxManifestContents)
-      .catch((err: any) => {
-        throw new Error(
-          `Unable to parse the "${path.join(appxManifestContainingFolder, appxManifestFileName)}" file, it could be malformed.`
-        );
-      })
-      .then((parsedAppxManifest: any) => {
-        try {
-          return parsedAppxManifest.Package.Identity[0]["$"].Version.match(/^\d+\.\d+\.\d+/)[0];
-        } catch (e) {
-          throw new Error(
-            `Unable to parse the package version from the "${path.join(appxManifestContainingFolder, appxManifestFileName)}" file.`
-          );
-        }
-      });
+    throw new Error(`Unsupported platform "${command.platform}". Use "ios" or "android".`);
   }
 }
 
@@ -1266,14 +1240,13 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         switch (platform) {
           case "android":
           case "ios":
-          case "windows":
             if (!bundleName) {
               bundleName = platform === "ios" ? "main.jsbundle" : `index.${platform}.bundle`;
             }
 
             break;
           default:
-            throw new Error('Platform must be either "android", "ios" or "windows".');
+            throw new Error('Platform must be either "android" or "ios".');
         }
 
         let projectName: string;
