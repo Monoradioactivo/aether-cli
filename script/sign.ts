@@ -34,7 +34,7 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
       updateContentsPath = copyFileToTmpDir(updateContentsPath);
     }
   } catch (error) {
-    Promise.reject(error);
+    return Promise.reject(error);
   }
 
   const signatureFilePath: string = path.join(updateContentsPath, METADATA_FILE_NAME);
@@ -56,7 +56,7 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
 
   if (prevSignatureExists) {
     console.log(`Deleting previous release signature at ${signatureFilePath}`);
-    await fs.rmdir(signatureFilePath);
+    await fs.unlink(signatureFilePath);
   }
 
   const hash: string = await hashUtils.generatePackageHashFromDirectory(updateContentsPath, path.join(updateContentsPath, ".."));
@@ -69,12 +69,13 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
     jwt.sign(claims, privateKey, { algorithm: "RS256" }, async (err: Error, signedJwt: string) => {
       if (err) {
         reject(new Error("The specified signing key file was not valid"));
+        return;
       }
 
       try {
         await fs.writeFile(signatureFilePath, signedJwt);
         console.log(`Generated a release signature and wrote it to ${signatureFilePath}`);
-        resolve(null);
+        resolve();
       } catch (error) {
         reject(error);
       }

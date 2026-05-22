@@ -12,11 +12,11 @@ export function isValidVersion(version: string): boolean {
 }
 
 export async function runHermesEmitBinaryCommand(
-    bundleName: string,
-    outputFolder: string,
-    sourcemapOutput: string,
-    extraHermesFlags: string[],
-    gradleFile: string
+  bundleName: string,
+  outputFolder: string,
+  sourcemapOutput: string,
+  extraHermesFlags: string[],
+  gradleFile: string
 ): Promise<void> {
   const hermesArgs: string[] = [];
   const envNodeArgs: string = process.env.CODE_PUSH_NODE_ARGS;
@@ -54,6 +54,7 @@ export async function runHermesEmitBinaryCommand(
     hermesProcess.on("close", (exitCode: number, signal: string) => {
       if (exitCode !== 0) {
         reject(new Error(`"hermes" command failed (exitCode=${exitCode}, signal=${signal}).`));
+        return;
       }
       // Copy HBC bundle to overwrite JS bundle
       const source = path.join(outputFolder, bundleName + ".hbc");
@@ -62,13 +63,15 @@ export async function runHermesEmitBinaryCommand(
         if (err) {
           console.error(err);
           reject(new Error(`Copying file ${source} to ${destination} failed. "hermes" previously exited with code ${exitCode}.`));
+          return;
         }
         fs.unlink(source, (err) => {
           if (err) {
             console.error(err);
             reject(err);
+            return;
           }
-          resolve(null as void);
+          resolve();
         });
       });
     });
@@ -108,38 +111,44 @@ export async function runHermesEmitBinaryCommand(
       composeSourceMapsProcess.on("close", (exitCode: number, signal: string) => {
         if (exitCode !== 0) {
           reject(new Error(`"compose-source-maps" command failed (exitCode=${exitCode}, signal=${signal}).`));
+          return;
         }
-
         // Delete the HBC sourceMap, otherwise it will be included in the Aether bundle as well
         fs.unlink(jsCompilerSourceMapFile, (err) => {
           if (err) {
             console.error(err);
             reject(err);
+            return;
           }
-
-          resolve(null);
+          resolve(undefined);
         });
       });
     });
   });
 }
 
-function parseBuildGradleFile(gradleFile: string) {
+async function parseBuildGradleFile(gradleFile: string): Promise<any> {
   let buildGradlePath: string = path.join("android", "app");
   if (gradleFile) {
     buildGradlePath = gradleFile;
   }
-  if (fs.lstatSync(buildGradlePath).isDirectory()) {
+  let isDir = false;
+  try {
+    isDir = fs.lstatSync(buildGradlePath).isDirectory();
+  } catch {
+    // Path doesn't exist, fall through to the descriptive error below.
+  }
+  if (isDir) {
     buildGradlePath = path.join(buildGradlePath, "build.gradle");
   }
-
   if (fileDoesNotExistOrIsDirectory(buildGradlePath)) {
     throw new Error(`Unable to find gradle file "${buildGradlePath}".`);
   }
-
-  return g2js.parseFile(buildGradlePath).catch(() => {
+  try {
+    return await g2js.parseFile(buildGradlePath);
+  } catch {
     throw new Error(`Unable to parse the "${buildGradlePath}" file. Please ensure it is a well-formed Gradle file.`);
-  });
+  }
 }
 
 async function getHermesCommandFromGradle(gradleFile: string): Promise<string> {
@@ -154,7 +163,7 @@ async function getHermesCommandFromGradle(gradleFile: string): Promise<string> {
   }
 }
 
-export function getAndroidHermesEnabled(gradleFile: string): boolean {
+export function getAndroidHermesEnabled(gradleFile: string): Promise<boolean> {
   return parseBuildGradleFile(gradleFile).then((buildGradle: any) => {
     return Array.from(buildGradle["project.ext.react"] || []).some((line: string) => /^enableHermes\s{0,}:\s{0,}true/.test(line));
   });
@@ -171,7 +180,7 @@ export function getiOSHermesEnabled(podFile: string): boolean {
 
   try {
     const podFileContents = fs.readFileSync(podPath).toString();
-    return /([^#\n]*:?hermes_enabled(\s+|\n+)?(=>|:)(\s+|\n+)?true)/.test(podFileContents);
+    return /^[^#\n]*:?hermes_enabled(\s+|\n+)?(=>|:)(\s+|\n+)?true/m.test(podFileContents);
   } catch (error) {
     throw error;
   }
