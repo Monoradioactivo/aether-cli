@@ -5,7 +5,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import * as fileUtils from "../script/utils/file-utils";
+import * as fileUtils from "../../script/utils/file-utils";
 
 function randomDirName(): string {
   return "aether-fileutils-test-" + crypto.randomBytes(6).toString("hex");

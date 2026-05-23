@@ -1025,7 +1025,7 @@ export function createCommand(): cli.ICommand {
               cmd = { type: cli.CommandType.collaboratorRemove };
 
               (<cli.ICollaboratorRemoveCommand>cmd).appName = arg2;
-              (<cli.ICollaboratorAddCommand>cmd).email = arg3;
+              (<cli.ICollaboratorRemoveCommand>cmd).email = arg3;
             }
             break;
         }

@@ -10,22 +10,18 @@ import * as moment from "moment";
 import * as os from "os";
 import * as path from "path";
 const plist = require("plist");
-const progress = require("progress");
 const prompt = require("prompt");
 const rimraf = require("rimraf");
 import * as semver from "semver";
 const Table = require("cli-table");
-const which = require("which");
 import wordwrap = require("wordwrap");
 import * as cli from "../script/types/cli";
 import sign from "./sign";
 const xcode = require("xcode");
-import { promisify } from "util";
 import { AetherError } from "./errors";
 import {
   AccessKey,
   AccessKeyWithSecret,
-  Account,
   App,
   CollaboratorMap,
   CollaboratorProperties,
@@ -177,7 +173,6 @@ function appAdd(command: cli.IAppAddCommand): Promise<void> {
 
 function appList(command: cli.IAppListCommand): Promise<void> {
   throwForInvalidOutputFormat(command.format);
-  let apps: App[];
   return sdk.getApps().then((retrievedApps: App[]): void => {
     printAppList(command.format, retrievedApps);
   });
@@ -1499,7 +1494,6 @@ function serializeConnectionInfo(accessKey: string, preserveAccessKeyOnLogout: b
     connectionInfo.customServerUrl = customServerUrl;
   }
 
-  fs.mkdirSync(path.dirname(configFilePath), { recursive: true });
   fs.mkdirSync(path.dirname(configFilePath), { recursive: true });
   const json: string = JSON.stringify(connectionInfo);
   fs.writeFileSync(configFilePath, json, { encoding: "utf8" });
