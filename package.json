@@ -73,6 +73,10 @@
     "yargs": "^17.7.2",
     "yazl": "^2.5.1"
   },
+  "overrides": {
+    "lodash": "^4.17.21",
+    "xmldom": "npm:@xmldom/xmldom@^0.8.10"
+  },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^25.9.0",
