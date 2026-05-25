@@ -5,6 +5,9 @@ import * as jwt from "jsonwebtoken";
 import { copyFileToTmpDir, isDirectory } from "./utils/file-utils";
 
 const CURRENT_CLAIM_VERSION: string = "1.0.0";
+// TODO(7A): rename to ".aetherrelease" when the Aether SDK ships.
+// Keep ".codepushrelease" for now to maintain compatibility with
+// react-native-code-push apps deploying against Aether servers.
 const METADATA_FILE_NAME: string = ".codepushrelease";
 
 interface CodeSigningClaims {
@@ -25,13 +28,13 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
     return Promise.reject(new Error(`The path specified for the signing key ("${privateKeyPath}") was not valid.`));
   }
 
-  // If releasing a single file, copy the file to a temporary 'CodePush' directory in which to publish the release
+  // If releasing a single file, copy the file to a temporary 'Aether' directory in which to publish the release
   try {
     if (!isDirectory(updateContentsPath)) {
       updateContentsPath = copyFileToTmpDir(updateContentsPath);
     }
   } catch (error) {
-    Promise.reject(error);
+    return Promise.reject(error);
   }
 
   const signatureFilePath: string = path.join(updateContentsPath, METADATA_FILE_NAME);
@@ -53,7 +56,7 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
 
   if (prevSignatureExists) {
     console.log(`Deleting previous release signature at ${signatureFilePath}`);
-    await fs.rmdir(signatureFilePath);
+    await fs.unlink(signatureFilePath);
   }
 
   const hash: string = await hashUtils.generatePackageHashFromDirectory(updateContentsPath, path.join(updateContentsPath, ".."));
@@ -66,12 +69,13 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
     jwt.sign(claims, privateKey, { algorithm: "RS256" }, async (err: Error, signedJwt: string) => {
       if (err) {
         reject(new Error("The specified signing key file was not valid"));
+        return;
       }
 
       try {
         await fs.writeFile(signatureFilePath, signedJwt);
         console.log(`Generated a release signature and wrote it to ${signatureFilePath}`);
-        resolve(null);
+        resolve();
       } catch (error) {
         reject(error);
       }

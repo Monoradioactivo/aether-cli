@@ -4,8 +4,6 @@ import * as childProcess from "child_process";
 import * as cli from "../../script/types/cli";
 import * as moment from "moment";
 import * as path from "path";
-import * as Q from "q";
-
 const simctl = require("simctl");
 const which = require("which");
 
@@ -28,7 +26,7 @@ class AndroidDebugPlatform implements IDebugPlatform {
     }
 
     // For now there is no ability to specify device for debug like:
-    // code-push debug android "192.168.121.102:5555"
+    // aether debug android "192.168.121.102:5555"
     // So we have to throw an error in case more than 1 android device was attached
     // otherwise we will very likely run into an exception while trying to read ‘adb logcat’ from device which codepushified app is not running on.
     if (numberOfAvailableDevices > 1) {
@@ -96,9 +94,14 @@ class iOSDebugPlatform implements IDebugPlatform {
   }
 }
 
+// TODO(7A): once the Aether SDK ships, accept both "[Aether] " and
+// "[CodePush] " prefixes to support apps mid-migration. For now this
+// matches only the react-native-code-push prefix.
 const logMessagePrefix = "[CodePush] ";
+
 function processLogData(logData: Buffer) {
   const content = logData.toString();
+
   content
     .split("\n")
     .filter((line: string) => line.indexOf(logMessagePrefix) > -1)
@@ -122,8 +125,8 @@ const debugPlatforms: any = {
   ios: new iOSDebugPlatform(),
 };
 
-export default function (command: cli.IDebugCommand): Q.Promise<void> {
-  return Q.Promise<void>((resolve, reject) => {
+export default function (command: cli.IDebugCommand): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const platform: string = command.platform.toLowerCase();
     const debugPlatform: IDebugPlatform = debugPlatforms[platform];
 
@@ -138,7 +141,6 @@ export default function (command: cli.IDebugCommand): Q.Promise<void> {
 
       logProcess.stdout.on("data", processLogData.bind(debugPlatform));
       logProcess.stderr.on("data", reject);
-
       logProcess.on("close", resolve);
     } catch (e) {
       reject(e);

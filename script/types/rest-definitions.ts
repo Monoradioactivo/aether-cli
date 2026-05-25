@@ -1,86 +1,92 @@
-// Copyright (c) Aether. All rights reserved.
+export interface CustomHeaders {
+  [headerName: string]: string;
+}
 
-interface AccessKeyBase {
+export interface Account {
+  email: string;
+  name: string;
+  linkedProviders: string[];
+}
+
+export interface AccessKey {
+  friendlyName: string;
   createdBy?: string;
-  /*legacy*/ description?: string;
-  /*key*/ friendlyName?: string;
-  /*generated key*/ name?: string;
-}
-
-/*out*/
-export interface AccessKey extends AccessKeyBase {
-  /*generated*/ createdTime?: number;
+  createdTime?: number;
   expires: number;
-  /*generated*/ isSession?: boolean;
+  isSession?: boolean;
 }
 
-/*in*/
-export interface AccessKeyRequest extends AccessKeyBase {
+export interface AccessKeyWithSecret extends AccessKey {
+  name: string;
+}
+
+export interface AccessKeyRequest {
+  friendlyName?: string;
   ttl?: number;
 }
 
-/*out*/
-export interface DeploymentMetrics {
-  [packageLabelOrAppVersion: string]: UpdateMetrics;
+export interface Session {
+  loggedInTime: number;
+  createdBy: string;
 }
 
-/*in*/
-export interface DeploymentStatusReport {
-  appVersion: string;
-  clientUniqueId?: string;
-  deploymentKey: string;
-  previousDeploymentKey?: string;
-  previousLabelOrAppVersion?: string;
-  label?: string;
-  status?: string;
+export interface CollaboratorProperties {
+  permission: "Owner" | "Collaborator";
+  isCurrentAccount?: boolean;
 }
 
-/*in*/
-export interface DownloadReport {
-  clientUniqueId: string;
-  deploymentKey: string;
-  label: string;
+export interface CollaboratorMap {
+  [email: string]: CollaboratorProperties;
 }
 
-/*inout*/
+export interface App {
+  name: string;
+  collaborators?: CollaboratorMap;
+  deployments?: string[];
+}
+
+export interface AppCreationRequest {
+  name: string;
+  manuallyProvisionDeployments?: boolean;
+}
+
+export interface Deployment {
+  name: string;
+  key?: string;
+  package?: Package;
+}
+
+export interface BlobInfo {
+  size: number;
+  url: string;
+}
+
+export interface PackageHashToBlobInfoMap {
+  [packageHash: string]: BlobInfo;
+}
+
 export interface PackageInfo {
   appVersion?: string;
   description?: string;
   isDisabled?: boolean;
   isMandatory?: boolean;
-  /*generated*/ label?: string;
-  /*generated*/ packageHash?: string;
-  rollout?: number;
-}
-
-/*out*/
-export interface UpdateCheckResponse extends PackageInfo {
-  target_binary_range?: string;
-  downloadURL?: string;
-  isAvailable: boolean;
-  packageSize?: number;
-  shouldRunBinaryVersion?: boolean;
-  updateAppVersion?: boolean;
-}
-
-/*out*/
-export interface UpdateCheckCacheResponse {
-  originalPackage: UpdateCheckResponse;
-  rollout?: number;
-  rolloutPackage?: UpdateCheckResponse;
-}
-
-/*in*/
-export interface UpdateCheckRequest {
-  appVersion: string;
-  clientUniqueId?: string;
-  deploymentKey: string;
-  isCompanion?: boolean;
   label?: string;
   packageHash?: string;
+  rollout?: number;
 }
 
-/*out*/
+export interface Package extends PackageInfo {
+  blobUrl: string;
+  diffPackageMap?: PackageHashToBlobInfoMap;
+  manifestBlobUrl?: string;
+  originalDeployment?: string;
+  originalLabel?: string;
+  releasedBy?: string;
+  releaseMethod?: "Upload" | "Promote" | "Rollback";
+  size: number;
+  uploadTime: number;
+}
+
 export interface UpdateMetrics {
   active: number;
   downloaded?: number;
@@ -88,64 +94,41 @@ export interface UpdateMetrics {
   installed?: number;
 }
 
-/*out*/
-export interface Account {
-  /*key*/ email: string;
+export interface DeploymentMetrics {
+  [packageLabelOrAppVersion: string]: UpdateMetrics;
+}
+
+export type ApiKeyScope = "deploy" | "apps" | "keys" | "read";
+
+export interface ApiKey {
+  id: string;
   name: string;
-  linkedProviders: string[];
+  key_prefix: string;
+  scopes: ApiKeyScope[];
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-/*out*/
-export interface CollaboratorProperties {
-  isCurrentAccount?: boolean;
-  permission: string;
+export interface ApiKeyWithSecret extends ApiKey {
+  key: string;
 }
 
-/*out*/
-export interface CollaboratorMap {
-  [email: string]: CollaboratorProperties;
+export interface ApiKeyCreationRequest {
+  name: string;
+  scopes: ApiKeyScope[];
+  expires_at?: string | null;
 }
 
-/*inout*/
-export interface App {
-  /*generated*/ collaborators?: CollaboratorMap;
-  /*key*/ name: string;
-  /*generated*/ deployments?: string[];
+export interface ApiKeyUpdateRequest {
+  name?: string;
+  scopes?: ApiKeyScope[];
+  expires_at?: string | null;
 }
 
-/*in*/
-export interface AppCreationRequest extends App {
-  manuallyProvisionDeployments?: boolean;
+export interface ApiKeyRevokeResult {
+  id: string;
+  revoked_at: string;
 }
-
-/*inout*/
-export interface Deployment {
-  /*generated key*/ key?: string;
-  /*key*/ name: string;
-  /*generated*/ package?: Package;
-}
-
-/*out*/
-export interface BlobInfo {
-  size: number;
-  url: string;
-}
-
-/*out*/
-export interface PackageHashToBlobInfoMap {
-  [packageHash: string]: BlobInfo;
-}
-
-/*inout*/
-export interface Package extends PackageInfo {
-  /*generated*/ blobUrl: string;
-  /*generated*/ diffPackageMap?: PackageHashToBlobInfoMap;
-  /*generated*/ originalLabel?: string; // Set on "Promote" and "Rollback"
-  /*generated*/ originalDeployment?: string; // Set on "Promote"
-  /*generated*/ releasedBy?: string; // Set by commitPackage
-  /*generated*/ releaseMethod?: string; // "Upload", "Promote" or "Rollback". Unknown if unspecified
-  /*generated*/ size: number;
-  /*generated*/ uploadTime: number;
-}
-
-export * from "./rest-definitions";

@@ -7,57 +7,42 @@ import * as fs from "fs";
 import * as chalk from "chalk";
 const g2js = require("gradle-to-js/lib/parser");
 import * as moment from "moment";
-const opener = require("opener");
 import * as os from "os";
 import * as path from "path";
 const plist = require("plist");
-const progress = require("progress");
 const prompt = require("prompt");
-import * as Q from "q";
 const rimraf = require("rimraf");
 import * as semver from "semver";
 const Table = require("cli-table");
-const which = require("which");
 import wordwrap = require("wordwrap");
 import * as cli from "../script/types/cli";
 import sign from "./sign";
 const xcode = require("xcode");
+import { AetherError } from "./errors";
 import {
   AccessKey,
-  Account,
+  AccessKeyWithSecret,
   App,
-  CodePushError,
   CollaboratorMap,
   CollaboratorProperties,
   Deployment,
   DeploymentMetrics,
-  Headers,
   Package,
   PackageInfo,
   Session,
   UpdateMetrics,
 } from "../script/types";
-import {
-  getAndroidHermesEnabled,
-  getiOSHermesEnabled,
-  runHermesEmitBinaryCommand,
-  isValidVersion
-} from "./react-native-utils";
-import {
-  fileDoesNotExistOrIsDirectory,
-  isBinaryOrZip,
-  fileExists
-} from "./utils/file-utils";
+import { getAndroidHermesEnabled, getiOSHermesEnabled, runHermesEmitBinaryCommand, isValidVersion } from "./react-native-utils";
+import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./utils/file-utils";
 
-const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".code-push.config");
+const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".aether", "config.json");
+const DEFAULT_AETHER_SERVER_URL = "https://api-staging.aetherpush.com";
 const emailValidator = require("email-validator");
 const packageJson = require("../../package.json");
-const parseXml = Q.denodeify(require("xml2js").parseString);
-import Promise = Q.Promise;
 const properties = require("properties");
 
-const CLI_HEADERS: Headers = {
-  "X-CodePush-CLI-Version": packageJson.version,
+const CLI_HEADERS: Record<string, string> = {
+  "X-Aether-CLI-Version": packageJson.version,
 };
 
 /** Deprecated */
@@ -88,7 +73,7 @@ let connectionInfo: ILoginConnectionInfo;
 
 export const confirm = (message: string = "Are you sure?"): Promise<boolean> => {
   message += " (y/N):";
-  return Promise<boolean>((resolve, reject, notify): void => {
+  return new Promise<boolean>((resolve, reject): void => {
     prompt.message = "";
     prompt.delimiter = "";
 
@@ -120,8 +105,8 @@ export const confirm = (message: string = "Are you sure?"): Promise<boolean> => 
 };
 
 function accessKeyAdd(command: cli.IAccessKeyAddCommand): Promise<void> {
-  return sdk.addAccessKey(command.name, command.ttl).then((accessKey: AccessKey) => {
-    log(`Successfully created the "${command.name}" access key: ${accessKey.key}`);
+  return sdk.addAccessKey(command.name, command.ttl).then((accessKey: AccessKeyWithSecret) => {
+    log(`Successfully created the "${command.name}" access key: ${accessKey.name}`);
     log("Make sure to save this key value somewhere safe, since you won't be able to view it from the CLI again!");
   });
 }
@@ -162,7 +147,7 @@ function accessKeyList(command: cli.IAccessKeyListCommand): Promise<void> {
 }
 
 function accessKeyRemove(command: cli.IAccessKeyRemoveCommand): Promise<void> {
-  return confirm().then((wasConfirmed: boolean): Promise<void> => {
+  return confirm().then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeAccessKey(command.accessKey).then((): void => {
         log(`Successfully removed the "${command.accessKey}" access key.`);
@@ -188,7 +173,6 @@ function appAdd(command: cli.IAppAddCommand): Promise<void> {
 
 function appList(command: cli.IAppListCommand): Promise<void> {
   throwForInvalidOutputFormat(command.format);
-  let apps: App[];
   return sdk.getApps().then((retrievedApps: App[]): void => {
     printAppList(command.format, retrievedApps);
   });
@@ -196,7 +180,7 @@ function appList(command: cli.IAppListCommand): Promise<void> {
 
 function appRemove(command: cli.IAppRemoveCommand): Promise<void> {
   return confirm("Are you sure you want to remove this app? Note that its deployment keys will be PERMANENTLY unrecoverable.").then(
-    (wasConfirmed: boolean): Promise<void> => {
+    (wasConfirmed: boolean) => {
       if (wasConfirmed) {
         return sdk.removeApp(command.appName).then((): void => {
           log('Successfully removed the "' + command.appName + '" app.');
@@ -223,7 +207,7 @@ export const createEmptyTempReleaseFolder = (folderPath: string) => {
 function appTransfer(command: cli.IAppTransferCommand): Promise<void> {
   throwForInvalidEmail(command.email);
 
-  return confirm().then((wasConfirmed: boolean): Promise<void> => {
+  return confirm().then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.transferApp(command.appName, command.email).then((): void => {
         log(
@@ -255,7 +239,7 @@ function listCollaborators(command: cli.ICollaboratorListCommand): Promise<void>
 function removeCollaborator(command: cli.ICollaboratorRemoveCommand): Promise<void> {
   throwForInvalidEmail(command.email);
 
-  return confirm().then((wasConfirmed: boolean): Promise<void> => {
+  return confirm().then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeCollaborator(command.appName, command.email).then((): void => {
         log('Successfully removed "' + command.email + '" as a collaborator from the app "' + command.appName + '".');
@@ -271,18 +255,18 @@ function deleteConnectionInfoCache(printMessage: boolean = true): void {
     fs.unlinkSync(configFilePath);
 
     if (printMessage) {
-      log(`Successfully logged-out. The session file located at ${chalk.cyan(configFilePath)} has been deleted.\r\n`);
+      log(`Logged out. The session file at ${chalk.cyan(configFilePath)} has been deleted.`);
     }
   } catch (ex) {}
 }
 
 function deleteFolder(folderPath: string): Promise<void> {
-  return Promise<void>((resolve, reject, notify) => {
+  return new Promise<void>((resolve, reject) => {
     rimraf(folderPath, (err: any) => {
       if (err) {
         reject(err);
       } else {
-        resolve(<void>null);
+        resolve();
       }
     });
   });
@@ -303,7 +287,7 @@ function deploymentAdd(command: cli.IDeploymentAddCommand): Promise<void> {
 }
 
 function deploymentHistoryClear(command: cli.IDeploymentHistoryClearCommand): Promise<void> {
-  return confirm().then((wasConfirmed: boolean): Promise<void> => {
+  return confirm().then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.clearDeploymentHistory(command.appName, command.deploymentName).then((): void => {
         log(
@@ -344,11 +328,11 @@ export const deploymentList = (command: cli.IDeploymentListCommand, showPackage:
               }
             });
           } else {
-            return Q(<void>null);
+            return Promise.resolve();
           }
         });
 
-        return Q.all(metricsPromises);
+        return Promise.all(metricsPromises).then(() => undefined);
       }
     })
     .then(() => {
@@ -359,7 +343,7 @@ export const deploymentList = (command: cli.IDeploymentListCommand, showPackage:
 function deploymentRemove(command: cli.IDeploymentRemoveCommand): Promise<void> {
   return confirm(
     "Are you sure you want to remove this deployment? Note that its deployment key will be PERMANENTLY unrecoverable."
-  ).then((wasConfirmed: boolean): Promise<void> => {
+  ).then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeDeployment(command.appName, command.deploymentName).then((): void => {
         log('Successfully removed the "' + command.deploymentName + '" deployment from the "' + command.appName + '" app.');
@@ -387,11 +371,11 @@ function deploymentRename(command: cli.IDeploymentRenameCommand): Promise<void> 
 function deploymentHistory(command: cli.IDeploymentHistoryCommand): Promise<void> {
   throwForInvalidOutputFormat(command.format);
 
-  return Q.all<any>([
+  return Promise.all([
     sdk.getAccountInfo(),
     sdk.getDeploymentHistory(command.appName, command.deploymentName),
     sdk.getDeploymentMetrics(command.appName, command.deploymentName),
-  ]).spread<void>((account: Account, deploymentHistory: Package[], metrics: DeploymentMetrics): void => {
+  ]).then(([account, deploymentHistory, metrics]) => {
     const totalActive: number = getTotalActiveFromDeploymentMetrics(metrics);
     deploymentHistory.forEach((packageObject: Package) => {
       if (metrics[packageObject.label]) {
@@ -433,7 +417,7 @@ function deserializeConnectionInfo(): ILoginConnectionInfo {
 export function execute(command: cli.ICommand) {
   connectionInfo = deserializeConnectionInfo();
 
-  return Q(<void>null).then(() => {
+  return Promise.resolve().then(() => {
     switch (command.type) {
       // Must not be logged in
       case cli.CommandType.login:
@@ -443,18 +427,12 @@ export function execute(command: cli.ICommand) {
         }
         break;
 
-      // It does not matter whether you are logged in or not
-      case cli.CommandType.link:
-        break;
-
       // Must be logged in
       default:
         if (!!sdk) break; // Used by unit tests to skip authentication
 
         if (!connectionInfo) {
-          throw new Error(
-            "You are not currently logged in. Run the 'code-push-standalone login' command to authenticate with the CodePush server."
-          );
+          throw new Error("You are not currently logged in. Run 'aether login' to authenticate with Aether.");
         }
 
         sdk = getSdk(connectionInfo.accessKey, CLI_HEADERS, connectionInfo.customServerUrl);
@@ -519,9 +497,6 @@ export function execute(command: cli.ICommand) {
       case cli.CommandType.deploymentRename:
         return deploymentRename(<cli.IDeploymentRenameCommand>command);
 
-      case cli.CommandType.link:
-        return link(<cli.ILinkCommand>command);
-
       case cli.CommandType.login:
         return login(<cli.ILoginCommand>command);
 
@@ -571,77 +546,58 @@ function getTotalActiveFromDeploymentMetrics(metrics: DeploymentMetrics): number
   return totalActive;
 }
 
-function initiateExternalAuthenticationAsync(action: string, serverUrl?: string): void {
-  const message: string =
-    `A browser is being launched to authenticate your account. Follow the instructions ` +
-    `it displays to complete your ${action === "register" ? "registration" : action}.`;
+async function login(command: cli.ILoginCommand): Promise<void> {
+  const serverUrl = command.serverUrl || DEFAULT_AETHER_SERVER_URL;
 
-  log(message);
-  const hostname: string = os.hostname();
-  const url: string = `${serverUrl || AccountManager.SERVER_URL}/auth/${action}?hostname=${hostname}`;
-  opener(url);
-}
-
-function link(command: cli.ILinkCommand): Promise<void> {
-  initiateExternalAuthenticationAsync("link", command.serverUrl);
-  return Q(<void>null);
-}
-
-function login(command: cli.ILoginCommand): Promise<void> {
-  // Check if one of the flags were provided.
   if (command.accessKey) {
-    sdk = getSdk(command.accessKey, CLI_HEADERS, command.serverUrl);
-    return sdk.isAuthenticated().then((isAuthenticated: boolean): void => {
-      if (isAuthenticated) {
-        serializeConnectionInfo(command.accessKey, /*preserveAccessKeyOnLogout*/ true, command.serverUrl);
-      } else {
-        throw new Error("Invalid access key.");
-      }
-    });
-  } else {
-    return loginWithExternalAuthentication("login", command.serverUrl);
-  }
-}
-
-function loginWithExternalAuthentication(action: string, serverUrl?: string): Promise<void> {
-  initiateExternalAuthenticationAsync(action, serverUrl);
-  log(""); // Insert newline
-
-  return requestAccessKey().then((accessKey: string): Promise<void> => {
-    if (accessKey === null) {
-      // The user has aborted the synchronous prompt (e.g.:  via [CTRL]+[C]).
-      return;
+    sdk = getSdk(command.accessKey, CLI_HEADERS, serverUrl);
+    const authenticated = await sdk.isAuthenticated();
+    if (!authenticated) {
+      throw new Error("Invalid access key.");
     }
+    serializeConnectionInfo(command.accessKey, /*preserveAccessKeyOnLogout*/ true, serverUrl);
+    return;
+  }
 
-    sdk = getSdk(accessKey, CLI_HEADERS, serverUrl);
+  const { email, password } = await promptForLoginCredentials();
+  if (!email) {
+    throw new Error("Email is required.");
+  }
+  if (!password) {
+    throw new Error("Password is required.");
+  }
 
-    return sdk.isAuthenticated().then((isAuthenticated: boolean): void => {
-      if (isAuthenticated) {
-        serializeConnectionInfo(accessKey, /*preserveAccessKeyOnLogout*/ false, serverUrl);
-      } else {
-        throw new Error("Invalid access key.");
-      }
+  const url = serverUrl.replace(/\/$/, "") + "/v1/auth/login";
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email, password }),
     });
-  });
+  } catch (err) {
+    throw new Error(`Unable to reach Aether at ${serverUrl}. Are you offline, or behind a firewall or proxy?`);
+  }
+
+  const body: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.error || body.message || `Login failed (HTTP ${res.status}).`);
+  }
+
+  const accessKey: string = body.accessKey;
+  if (!accessKey) {
+    throw new Error("Server returned an empty access key.");
+  }
+
+  sdk = getSdk(accessKey, CLI_HEADERS, serverUrl);
+  serializeConnectionInfo(accessKey, /*preserveAccessKeyOnLogout*/ false, serverUrl);
+  log(chalk.green(`Successfully logged in as ${email}.`));
 }
 
 function logout(command: cli.ICommand): Promise<void> {
-  return Q(<void>null)
-    .then((): Promise<void> => {
-      if (!connectionInfo.preserveAccessKeyOnLogout) {
-        const machineName: string = os.hostname();
-        return sdk.removeSession(machineName).catch((error: CodePushError) => {
-          // If we are not authenticated or the session doesn't exist anymore, just swallow the error instead of displaying it
-          if (error.statusCode !== AccountManager.ERROR_UNAUTHORIZED && error.statusCode !== AccountManager.ERROR_NOT_FOUND) {
-            throw error;
-          }
-        });
-      }
-    })
-    .then((): void => {
-      sdk = null;
-      deleteConnectionInfoCache();
-    });
+  sdk = null;
+  deleteConnectionInfoCache();
+  return Promise.resolve();
 }
 
 function formatDate(unixOffset: number): string {
@@ -904,7 +860,7 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
     if (parsedPlist && parsedPlist.CFBundleShortVersionString) {
       if (isValidVersion(parsedPlist.CFBundleShortVersionString)) {
         log(`Using the target binary version value "${parsedPlist.CFBundleShortVersionString}" from "${resolvedPlistFile}".\n`);
-        return Q(parsedPlist.CFBundleShortVersionString);
+        return Promise.resolve(parsedPlist.CFBundleShortVersionString);
       } else {
         if (parsedPlist.CFBundleShortVersionString !== "$(MARKETING_VERSION)") {
           throw new Error(
@@ -1019,32 +975,7 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
         return appVersion.toString();
       });
   } else {
-    const appxManifestFileName: string = "Package.appxmanifest";
-    let appxManifestContainingFolder: string;
-    let appxManifestContents: string;
-
-    try {
-      appxManifestContainingFolder = path.join("windows", projectName);
-      appxManifestContents = fs.readFileSync(path.join(appxManifestContainingFolder, "Package.appxmanifest")).toString();
-    } catch (err) {
-      throw new Error(`Unable to find or read "${appxManifestFileName}" in the "${path.join("windows", projectName)}" folder.`);
-    }
-
-    return parseXml(appxManifestContents)
-      .catch((err: any) => {
-        throw new Error(
-          `Unable to parse the "${path.join(appxManifestContainingFolder, appxManifestFileName)}" file, it could be malformed.`
-        );
-      })
-      .then((parsedAppxManifest: any) => {
-        try {
-          return parsedAppxManifest.Package.Identity[0]["$"].Version.match(/^\d+\.\d+\.\d+/)[0];
-        } catch (e) {
-          throw new Error(
-            `Unable to parse the package version from the "${path.join(appxManifestContainingFolder, appxManifestFileName)}" file.`
-          );
-        }
-      });
+    throw new Error(`Unsupported platform "${command.platform}". Use "ios" or "android".`);
   }
 }
 
@@ -1080,11 +1011,7 @@ function getAppVersionFromXcodeProject(command: cli.IReleaseReactCommand, projec
   }
 
   const xcodeProj = xcode.project(resolvedPbxprojFile).parseSync();
-  const marketingVersion = xcodeProj.getBuildProperty(
-    "MARKETING_VERSION",
-    command.buildConfigurationName,
-    command.xcodeTargetName
-  );
+  const marketingVersion = xcodeProj.getBuildProperty("MARKETING_VERSION", command.buildConfigurationName, command.xcodeTargetName);
   if (!isValidVersion(marketingVersion)) {
     throw new Error(
       `The "MARKETING_VERSION" key in the "${resolvedPbxprojFile}" file needs to specify a valid semver string, containing both a major and minor version (e.g. 1.3.2, 1.1).`
@@ -1092,7 +1019,7 @@ function getAppVersionFromXcodeProject(command: cli.IReleaseReactCommand, projec
   }
   console.log(`Using the target binary version value "${marketingVersion}" from "${resolvedPbxprojFile}".\n`);
 
-  return marketingVersion;
+  return Promise.resolve(marketingVersion);
 }
 
 function printJson(object: any): void {
@@ -1111,7 +1038,7 @@ function printAccessKeys(format: string, keys: AccessKey[]): void {
       }
 
       function keyToTableRow(key: AccessKey, dim: boolean): string[] {
-        const row: string[] = [key.name, key.createdTime ? formatDate(key.createdTime) : "", formatDate(key.expires)];
+        const row: string[] = [key.friendlyName, key.createdTime ? formatDate(key.createdTime) : "", formatDate(key.expires)];
 
         if (dim) {
           row.forEach((col: string, index: number) => {
@@ -1132,8 +1059,8 @@ function printSessions(format: string, sessions: Session[]): void {
   if (format === "json") {
     printJson(sessions);
   } else if (format === "table") {
-    printTable(["Machine", "Logged in"], (dataSource: any[]): void => {
-      sessions.forEach((session: Session) => dataSource.push([session.machineName, formatDate(session.loggedInTime)]));
+    printTable(["Created From", "Logged in"], (dataSource: any[]): void => {
+      sessions.forEach((session: Session) => dataSource.push([session.createdBy, formatDate(session.loggedInTime)]));
     });
   }
 }
@@ -1149,8 +1076,50 @@ function printTable(columnNames: string[], readData: (dataSource: any[]) => void
   log(table.toString());
 }
 
-function register(command: cli.IRegisterCommand): Promise<void> {
-  return loginWithExternalAuthentication("register", command.serverUrl);
+async function register(command: cli.IRegisterCommand): Promise<void> {
+  const serverUrl = command.serverUrl || DEFAULT_AETHER_SERVER_URL;
+  const { email, name, password, confirmPassword } = await promptForRegistration();
+
+  if (!email) {
+    throw new Error("Email is required.");
+  }
+  if (!password) {
+    throw new Error("Password is required.");
+  }
+  if (password !== confirmPassword) {
+    throw new Error("Passwords do not match.");
+  }
+
+  const reqBody: { email: string; password: string; name?: string } = { email, password };
+  if (name) {
+    reqBody.name = name;
+  }
+
+  const url = serverUrl.replace(/\/$/, "") + "/v1/auth/register";
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(reqBody),
+    });
+  } catch (err) {
+    throw new Error(`Unable to reach Aether at ${serverUrl}. Are you offline, or behind a firewall or proxy?`);
+  }
+
+  const body: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (Array.isArray(body.errors) && body.errors.length > 0) {
+      const lines = body.errors
+        .map((e: any) => (e && typeof e === "object" ? e.message || JSON.stringify(e) : String(e)))
+        .join("\n  ");
+      throw new Error(`Registration failed:\n  ${lines}`);
+    }
+    throw new Error(body.error || body.message || `Registration failed (HTTP ${res.status}).`);
+  }
+
+  log(chalk.green(`Account created for ${email}.`));
+  log(`Check your inbox for a verification link, then run ${chalk.cyan("aether login")} to sign in.`);
 }
 
 function promote(command: cli.IPromoteCommand): Promise<void> {
@@ -1178,7 +1147,7 @@ function promote(command: cli.IPromoteCommand): Promise<void> {
           '" deployment.'
       );
     })
-    .catch((err: CodePushError) => releaseErrorHandler(err, command));
+    .catch((err: AetherError) => releaseErrorHandler(err, command));
 }
 
 function patch(command: cli.IPatchCommand): Promise<void> {
@@ -1220,19 +1189,6 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
     isSingleFilePackage = false;
   }
 
-  let lastTotalProgress = 0;
-  const progressBar = new progress("Upload progress:[:bar] :percent :etas", {
-    complete: "=",
-    incomplete: " ",
-    width: 50,
-    total: 100,
-  });
-
-  const uploadProgress = (currentProgress: number): void => {
-    progressBar.tick(currentProgress - lastTotalProgress);
-    lastTotalProgress = currentProgress;
-  };
-
   const updateMetadata: PackageInfo = {
     description: command.description,
     isDisabled: command.disabled,
@@ -1242,8 +1198,9 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
 
   return sdk
     .isAuthenticated(true)
-    .then((isAuth: boolean): Promise<void> => {
-      return sdk.release(command.appName, command.deploymentName, filePath, command.appStoreVersion, updateMetadata, uploadProgress);
+    .then((isAuth: boolean) => {
+      log("Uploading release package...");
+      return sdk.release(command.appName, command.deploymentName, filePath, command.appStoreVersion, updateMetadata);
     })
     .then((): void => {
       log(
@@ -1258,13 +1215,13 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
           '" app.'
       );
     })
-    .catch((err: CodePushError) => releaseErrorHandler(err, command));
+    .catch((err: AetherError) => releaseErrorHandler(err, command));
 };
 
 export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> => {
   let bundleName: string = command.bundleName;
   let entryFile: string = command.entryFile;
-  const outputFolder: string = command.outputDir || path.join(os.tmpdir(), "CodePush");
+  const outputFolder: string = command.outputDir || path.join(os.tmpdir(), "Aether");
   const platform: string = (command.platform = command.platform.toLowerCase());
   const releaseCommand: cli.IReleaseCommand = <any>command;
   // Check for app and deployment exist before releasing an update.
@@ -1278,14 +1235,13 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         switch (platform) {
           case "android":
           case "ios":
-          case "windows":
             if (!bundleName) {
               bundleName = platform === "ios" ? "main.jsbundle" : `index.${platform}.bundle`;
             }
 
             break;
           default:
-            throw new Error('Platform must be either "android", "ios" or "windows".');
+            throw new Error('Platform must be either "android" or "ios".');
         }
 
         let projectName: string;
@@ -1322,7 +1278,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         }
 
         const appVersionPromise: Promise<string> = command.appStoreVersion
-          ? Q(command.appStoreVersion)
+          ? Promise.resolve(command.appStoreVersion)
           : getReactNativeProjectAppVersion(command, projectName);
 
         if (command.sourcemapOutput && !command.sourcemapOutput.endsWith(".map")) {
@@ -1352,9 +1308,9 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
       )
       .then(async () => {
         const isHermesEnabled =
-        command.useHermes ||
-        (platform === "android" && (await getAndroidHermesEnabled(command.gradleFile))) || // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in build.gradle and we're releasing an Android build
-        (platform === "ios" && (await getiOSHermesEnabled(command.podFile))); // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in Podfile and we're releasing an iOS build
+          command.useHermes ||
+          (platform === "android" && (await getAndroidHermesEnabled(command.gradleFile))) || // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in build.gradle and we're releasing an Android build
+          (platform === "ios" && (await getiOSHermesEnabled(command.podFile))); // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in Podfile and we're releasing an iOS build
 
         if (isHermesEnabled) {
           log(chalk.cyan("\nRunning hermes compiler...\n"));
@@ -1376,7 +1332,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         }
       })
       .then(() => {
-        log(chalk.cyan("\nReleasing update contents to CodePush:\n"));
+        log(chalk.cyan("\nReleasing update contents to Aether:\n"));
         return release(releaseCommand);
       })
       .then(() => {
@@ -1406,27 +1362,65 @@ function rollback(command: cli.IRollbackCommand): Promise<void> {
   });
 }
 
-function requestAccessKey(): Promise<string> {
-  return Promise<string>((resolve, reject, notify): void => {
+function promptForLoginCredentials(): Promise<{ email: string; password: string }> {
+  return new Promise((resolve, reject) => {
     prompt.message = "";
     prompt.delimiter = "";
-
     prompt.start();
-
     prompt.get(
       {
         properties: {
-          response: {
-            description: chalk.cyan("Enter your access key: "),
+          email: { description: chalk.cyan("Email: ") },
+          password: { description: chalk.cyan("Password: "), hidden: true, replace: "*" },
+        },
+      },
+      (err: any, result: any) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve({
+          email: (result.email || "").toString().trim(),
+          password: (result.password || "").toString(),
+        });
+      }
+    );
+  });
+}
+
+function promptForRegistration(): Promise<{ email: string; name: string; password: string; confirmPassword: string }> {
+  return new Promise((resolve, reject) => {
+    prompt.message = "";
+    prompt.delimiter = "";
+    prompt.start();
+    prompt.get(
+      {
+        properties: {
+          email: { description: chalk.cyan("Email: ") },
+          name: { description: chalk.cyan("Name (optional): "), default: "" },
+          password: {
+            description: chalk.cyan("Password (min 12 characters): "),
+            hidden: true,
+            replace: "*",
+          },
+          confirmPassword: {
+            description: chalk.cyan("Confirm password: "),
+            hidden: true,
+            replace: "*",
           },
         },
       },
-      (err: any, result: any): void => {
+      (err: any, result: any) => {
         if (err) {
-          resolve(null);
-        } else {
-          resolve(result.response.trim());
+          reject(err);
+          return;
         }
+        resolve({
+          email: (result.email || "").toString().trim(),
+          name: (result.name || "").toString().trim(),
+          password: (result.password || "").toString(),
+          confirmPassword: (result.confirmPassword || "").toString(),
+        });
       }
     );
   });
@@ -1472,7 +1466,7 @@ export const runReactNativeBundleCommand = (
   const reactNativeBundleProcess = spawn("node", reactNativeBundleArgs);
   log(`node ${reactNativeBundleArgs.join(" ")}`);
 
-  return Promise<void>((resolve, reject, notify) => {
+  return new Promise<void>((resolve, reject) => {
     reactNativeBundleProcess.stdout.on("data", (data: Buffer) => {
       log(data.toString().trim());
     });
@@ -1486,7 +1480,7 @@ export const runReactNativeBundleCommand = (
         reject(new Error(`"react-native bundle" command exited with code ${exitCode}.`));
       }
 
-      resolve(<void>null);
+      resolve();
     });
   });
 };
@@ -1500,14 +1494,11 @@ function serializeConnectionInfo(accessKey: string, preserveAccessKeyOnLogout: b
     connectionInfo.customServerUrl = customServerUrl;
   }
 
+  fs.mkdirSync(path.dirname(configFilePath), { recursive: true });
   const json: string = JSON.stringify(connectionInfo);
   fs.writeFileSync(configFilePath, json, { encoding: "utf8" });
 
-  log(
-    `\r\nSuccessfully logged-in. Your session file was written to ${chalk.cyan(configFilePath)}. You can run the ${chalk.cyan(
-      "code-push logout"
-    )} command at any time to delete this file and terminate your session.\r\n`
-  );
+  log(`Session file written to ${chalk.cyan(configFilePath)}. Run ${chalk.cyan("aether logout")} to terminate the session.`);
 }
 
 function sessionList(command: cli.ISessionListCommand): Promise<void> {
@@ -1520,11 +1511,11 @@ function sessionList(command: cli.ISessionListCommand): Promise<void> {
 
 function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   if (os.hostname() === command.machineName) {
-    throw new Error("Cannot remove the current login session via this command. Please run 'code-push-standalone logout' instead.");
+    throw new Error("Cannot remove the current login session via this command. Please run 'aether logout' instead.");
   } else {
-    return confirm().then((wasConfirmed: boolean): Promise<void> => {
+    return confirm().then((wasConfirmed: boolean) => {
       if (wasConfirmed) {
-        return sdk.removeSession(command.machineName).then((): void => {
+        return sdk.removeSessions(command.machineName).then((): void => {
           log(`Successfully removed the login session for "${command.machineName}".`);
         });
       }
@@ -1534,8 +1525,8 @@ function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   }
 }
 
-function releaseErrorHandler(error: CodePushError, command: cli.ICommand): void {
-  if ((<any>command).noDuplicateReleaseError && error.statusCode === AccountManager.ERROR_CONFLICT) {
+function releaseErrorHandler(error: AetherError, command: cli.ICommand): void {
+  if ((<any>command).noDuplicateReleaseError && error.statusCode === 409) {
     console.warn(chalk.yellow("[Warning] " + error.message));
   } else {
     throw error;
@@ -1567,9 +1558,7 @@ function throwForInvalidOutputFormat(format: string): void {
 
 function whoami(command: cli.ICommand): Promise<void> {
   return sdk.getAccountInfo().then((account): void => {
-    const accountInfo = `${account.email} (${account.linkedProviders.join(", ")})`;
-
-    log(accountInfo);
+    log(account.email);
   });
 }
 
@@ -1577,7 +1566,7 @@ function isCommandOptionSpecified(option: any): boolean {
   return option !== undefined && option !== null;
 }
 
-function getSdk(accessKey: string, headers: Headers, customServerUrl: string): AccountManager {
+function getSdk(accessKey: string, headers: Record<string, string>, customServerUrl: string): AccountManager {
   const sdk: any = new AccountManager(accessKey, CLI_HEADERS, customServerUrl);
   /*
    * If the server returns `Unauthorized`, it must be due to an invalid
@@ -1592,7 +1581,7 @@ function getSdk(accessKey: string, headers: Headers, customServerUrl: string): A
         let maybePromise: Promise<any> = originalFunction.apply(sdk, arguments);
         if (maybePromise && maybePromise.then !== undefined) {
           maybePromise = maybePromise.catch((error: any) => {
-            if (error.statusCode && error.statusCode === AccountManager.ERROR_UNAUTHORIZED) {
+            if (error.statusCode && error.statusCode === 401) {
               deleteConnectionInfoCache(/* printMessage */ false);
             }
 
