@@ -29,6 +29,10 @@ const mockSdkMethods: Record<string, jest.Mock> = {
   getSessions: jest.fn(),
   removeSessions: jest.fn(),
   getAccountInfo: jest.fn(),
+  getApiKeys: jest.fn(),
+  addApiKey: jest.fn(),
+  patchApiKey: jest.fn(),
+  revokeApiKey: jest.fn(),
 };
 
 jest.mock("../script/management-sdk", () => {
@@ -216,6 +220,177 @@ describe("command-executor", () => {
       });
       expect(mockSdkMethods.removeAccessKey).not.toHaveBeenCalled();
       expect(consoleLogSpy).toHaveBeenCalledWith("Access key removal cancelled.");
+    });
+  });
+
+  describe("api-key commands", () => {
+    beforeEach(() => {
+      executor.sdk = mockSdkMethods;
+    });
+
+    it("apiKeyAdd with invalid scope throws before calling SDK", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.apiKeyAdd,
+          name: "ci",
+          scopes: ["deploy", "invalid"],
+        })
+      ).rejects.toThrow(/Invalid scope/);
+      expect(mockSdkMethods.addApiKey).not.toHaveBeenCalled();
+    });
+
+    it("apiKeyAdd with empty scopes throws", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.apiKeyAdd,
+          name: "ci",
+          scopes: [],
+        })
+      ).rejects.toThrow(/At least one scope/);
+      expect(mockSdkMethods.addApiKey).not.toHaveBeenCalled();
+    });
+
+    it("apiKeyAdd without ttl omits expires_at from the SDK request", async () => {
+      mockSdkMethods.addApiKey.mockResolvedValue({
+        id: "uuid-1",
+        key: "aether_sk_live_RAW_SECRET",
+        name: "ci",
+        scopes: ["deploy", "read"],
+        expires_at: null,
+      });
+      await executor.execute({
+        type: cli.CommandType.apiKeyAdd,
+        name: "ci",
+        scopes: ["deploy", "read"],
+      });
+      expect(mockSdkMethods.addApiKey).toHaveBeenCalledWith({
+        name: "ci",
+        scopes: ["deploy", "read"],
+      });
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("aether_sk_live_RAW_SECRET"));
+    });
+
+    it("apiKeyAdd with ttl translates to ISO expires_at", async () => {
+      const realNow = Date.now;
+      Date.now = () => 1700000000000;
+      try {
+        mockSdkMethods.addApiKey.mockResolvedValue({
+          id: "uuid-1",
+          key: "key",
+          name: "ci",
+          scopes: ["deploy"],
+          expires_at: "2023-12-04T08:13:20.000Z",
+        });
+        await executor.execute({
+          type: cli.CommandType.apiKeyAdd,
+          name: "ci",
+          scopes: ["deploy"],
+          ttl: 86400000,
+        });
+        expect(mockSdkMethods.addApiKey).toHaveBeenCalledWith({
+          name: "ci",
+          scopes: ["deploy"],
+          expires_at: new Date(1700000000000 + 86400000).toISOString(),
+        });
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it("apiKeyList passes includeRevoked to the SDK", async () => {
+      mockSdkMethods.getApiKeys.mockResolvedValue([]);
+      await executor.execute({
+        type: cli.CommandType.apiKeyList,
+        format: "json",
+        includeRevoked: true,
+      });
+      expect(mockSdkMethods.getApiKeys).toHaveBeenCalledWith(true);
+    });
+
+    it("apiKeyList rejects invalid format", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.apiKeyList,
+          format: "yaml",
+          includeRevoked: false,
+        })
+      ).rejects.toThrow(/Invalid format/);
+    });
+
+    it("apiKeyPatch with no fields throws", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.apiKeyPatch,
+          id: "uuid-abc",
+        })
+      ).rejects.toThrow(/At least one of --name, --scopes, or --ttl/);
+      expect(mockSdkMethods.patchApiKey).not.toHaveBeenCalled();
+    });
+
+    it("apiKeyPatch with only --name sends only name to SDK", async () => {
+      mockSdkMethods.patchApiKey.mockResolvedValue({ id: "uuid-abc", name: "renamed" });
+      await executor.execute({
+        type: cli.CommandType.apiKeyPatch,
+        id: "uuid-abc",
+        newName: "renamed",
+      });
+      expect(mockSdkMethods.patchApiKey).toHaveBeenCalledWith("uuid-abc", { name: "renamed" });
+    });
+
+    it("apiKeyPatch with invalid scope throws before calling SDK", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.apiKeyPatch,
+          id: "uuid-abc",
+          scopes: ["bogus"],
+        })
+      ).rejects.toThrow(/Invalid scope/);
+      expect(mockSdkMethods.patchApiKey).not.toHaveBeenCalled();
+    });
+
+    it("apiKeyPatch with all fields builds the full update", async () => {
+      const realNow = Date.now;
+      Date.now = () => 1700000000000;
+      try {
+        mockSdkMethods.patchApiKey.mockResolvedValue({ id: "uuid-abc", name: "renamed" });
+        await executor.execute({
+          type: cli.CommandType.apiKeyPatch,
+          id: "uuid-abc",
+          newName: "renamed",
+          scopes: ["deploy", "read"],
+          ttl: 3600000,
+        });
+        expect(mockSdkMethods.patchApiKey).toHaveBeenCalledWith("uuid-abc", {
+          name: "renamed",
+          scopes: ["deploy", "read"],
+          expires_at: new Date(1700000000000 + 3600000).toISOString(),
+        });
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it("apiKeyRemove confirmed calls sdk.revokeApiKey", async () => {
+      setConfirmResponse("y");
+      mockSdkMethods.revokeApiKey.mockResolvedValue({
+        id: "uuid-abc",
+        revoked_at: "2025-01-01T00:00:00Z",
+      });
+      await executor.execute({
+        type: cli.CommandType.apiKeyRemove,
+        id: "uuid-abc",
+      });
+      expect(mockSdkMethods.revokeApiKey).toHaveBeenCalledWith("uuid-abc");
+    });
+
+    it("apiKeyRemove cancelled does not call SDK", async () => {
+      setConfirmResponse("n");
+      await executor.execute({
+        type: cli.CommandType.apiKeyRemove,
+        id: "uuid-abc",
+      });
+      expect(mockSdkMethods.revokeApiKey).not.toHaveBeenCalled();
+      expect(consoleLogSpy).toHaveBeenCalledWith("API key revocation cancelled.");
     });
   });
 
