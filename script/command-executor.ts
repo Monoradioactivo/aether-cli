@@ -22,6 +22,11 @@ import { AetherError } from "./errors";
 import {
   AccessKey,
   AccessKeyWithSecret,
+  ApiKey,
+  ApiKeyCreationRequest,
+  ApiKeyScope,
+  ApiKeyUpdateRequest,
+  ApiKeyWithSecret,
   App,
   CollaboratorMap,
   CollaboratorProperties,
@@ -156,6 +161,87 @@ function accessKeyRemove(command: cli.IAccessKeyRemoveCommand): Promise<void> {
 
     log("Access key removal cancelled.");
   });
+}
+
+const VALID_API_KEY_SCOPES: ApiKeyScope[] = ["deploy", "apps", "keys", "read"];
+
+function validateApiKeyScopes(scopes: string[]): ApiKeyScope[] {
+  if (!scopes || scopes.length === 0) {
+    throw new Error(`At least one scope must be provided. Valid scopes: ${VALID_API_KEY_SCOPES.join(", ")}.`);
+  }
+  for (const s of scopes) {
+    if (!VALID_API_KEY_SCOPES.includes(s as ApiKeyScope)) {
+      throw new Error(`Invalid scope "${s}". Valid scopes: ${VALID_API_KEY_SCOPES.join(", ")}.`);
+    }
+  }
+  return scopes as ApiKeyScope[];
+}
+
+function ttlToExpiresAtIso(ttlMs: number): string {
+  return new Date(Date.now() + ttlMs).toISOString();
+}
+
+async function apiKeyAdd(command: cli.IApiKeyAddCommand): Promise<void> {
+  const scopes = validateApiKeyScopes(command.scopes as unknown as string[]);
+  const request: ApiKeyCreationRequest = { name: command.name, scopes };
+  if (isCommandOptionSpecified(command.ttl)) {
+    request.expires_at = ttlToExpiresAtIso(command.ttl);
+  }
+  const created: ApiKeyWithSecret = await sdk.addApiKey(request);
+  log(`Successfully created the "${command.name}" API key:`);
+  log(`  ${created.key}`);
+  log("");
+  log("Make sure to save this key somewhere safe - you won't be able to view it from the CLI again.");
+  log("");
+  log(`  Id:      ${created.id}`);
+  log(`  Scopes:  ${created.scopes.join(", ")}`);
+  log(`  Expires: ${created.expires_at ? formatDate(new Date(created.expires_at).getTime()) : "Never"}`);
+}
+
+async function apiKeyPatch(command: cli.IApiKeyPatchCommand): Promise<void> {
+  const willUpdateName: boolean = isCommandOptionSpecified(command.newName);
+  const willUpdateScopes: boolean = isCommandOptionSpecified(command.scopes);
+  const willUpdateTtl: boolean = isCommandOptionSpecified(command.ttl);
+
+  if (!willUpdateName && !willUpdateScopes && !willUpdateTtl) {
+    throw new Error("At least one of --name, --scopes, or --ttl must be provided.");
+  }
+
+  const update: ApiKeyUpdateRequest = {};
+  if (willUpdateName) {
+    update.name = command.newName;
+  }
+  if (willUpdateScopes) {
+    update.scopes = validateApiKeyScopes(command.scopes as unknown as string[]);
+  }
+  if (willUpdateTtl) {
+    update.expires_at = ttlToExpiresAtIso(command.ttl);
+  }
+
+  const updated: ApiKey = await sdk.patchApiKey(command.id, update);
+  let logMessage: string = `Successfully updated the "${updated.name}" API key`;
+  const changes: string[] = [];
+  if (willUpdateName) changes.push("name");
+  if (willUpdateScopes) changes.push("scopes");
+  if (willUpdateTtl) changes.push("expiration");
+  logMessage += ` (${changes.join(", ")}).`;
+  log(logMessage);
+}
+
+async function apiKeyList(command: cli.IApiKeyListCommand): Promise<void> {
+  throwForInvalidOutputFormat(command.format);
+  const keys: ApiKey[] = await sdk.getApiKeys(command.includeRevoked);
+  printApiKeys(command.format, keys);
+}
+
+async function apiKeyRemove(command: cli.IApiKeyRemoveCommand): Promise<void> {
+  const wasConfirmed: boolean = await confirm();
+  if (!wasConfirmed) {
+    log("API key revocation cancelled.");
+    return;
+  }
+  const result = await sdk.revokeApiKey(command.id);
+  log(`Successfully revoked the API key with id "${result.id}".`);
 }
 
 function appAdd(command: cli.IAppAddCommand): Promise<void> {
@@ -451,6 +537,18 @@ export function execute(command: cli.ICommand) {
 
       case cli.CommandType.accessKeyRemove:
         return accessKeyRemove(<cli.IAccessKeyRemoveCommand>command);
+
+      case cli.CommandType.apiKeyAdd:
+        return apiKeyAdd(<cli.IApiKeyAddCommand>command);
+
+      case cli.CommandType.apiKeyPatch:
+        return apiKeyPatch(<cli.IApiKeyPatchCommand>command);
+
+      case cli.CommandType.apiKeyList:
+        return apiKeyList(<cli.IApiKeyListCommand>command);
+
+      case cli.CommandType.apiKeyRemove:
+        return apiKeyRemove(<cli.IApiKeyRemoveCommand>command);
 
       case cli.CommandType.appAdd:
         return appAdd(<cli.IAppAddCommand>command);
@@ -1061,6 +1159,30 @@ function printSessions(format: string, sessions: Session[]): void {
   } else if (format === "table") {
     printTable(["Created From", "Logged in"], (dataSource: any[]): void => {
       sessions.forEach((session: Session) => dataSource.push([session.createdBy, formatDate(session.loggedInTime)]));
+    });
+  }
+}
+
+function printApiKeys(format: string, keys: ApiKey[]): void {
+  if (format === "json") {
+    printJson(keys);
+  } else if (format === "table") {
+    printTable(["Id", "Name", "Scopes", "Last Used", "Expires", "Status"], (dataSource: any[]): void => {
+      function keyToRow(key: ApiKey, dim: boolean): string[] {
+        const expires: string = key.expires_at ? formatDate(new Date(key.expires_at).getTime()) : "Never";
+        const lastUsed: string = key.last_used_at ? formatDate(new Date(key.last_used_at).getTime()) : "Never";
+        const status: string = key.revoked_at ? "Revoked" : "Active";
+        const row: string[] = [key.id, key.name, key.scopes.join(", "), lastUsed, expires, status];
+        if (dim) {
+          row.forEach((col: string, index: number) => {
+            row[index] = (<any>chalk).dim(col);
+          });
+        }
+        return row;
+      }
+
+      keys.forEach((key: ApiKey) => !key.revoked_at && dataSource.push(keyToRow(key, /*dim*/ false)));
+      keys.forEach((key: ApiKey) => key.revoked_at && dataSource.push(keyToRow(key, /*dim*/ true)));
     });
   }
 }

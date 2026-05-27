@@ -96,6 +96,90 @@ describe("command-parser", () => {
     });
   });
 
+  describe("api-key", () => {
+    it("'api-key add <name> --scopes deploy,read' parses scopes as array", () => {
+      const cmd = parseArgs(["api-key", "add", "ci-deploy", "--scopes", "deploy,read"]);
+      expect(cmd.type).toBe(CommandType.apiKeyAdd);
+      expect(cmd.name).toBe("ci-deploy");
+      expect(cmd.scopes).toEqual(["deploy", "read"]);
+      expect(cmd.ttl).toBeUndefined();
+    });
+
+    it("'api-key add' with --ttl 7d sets ttl in milliseconds", () => {
+      const cmd = parseArgs(["api-key", "add", "ci-deploy", "--scopes", "deploy", "--ttl", "7d"]);
+      expect(cmd.type).toBe(CommandType.apiKeyAdd);
+      expect(cmd.ttl).toBe(7 * MS.day);
+    });
+
+    it("'api-key add' with a single scope", () => {
+      const cmd = parseArgs(["api-key", "add", "k", "--scopes", "deploy"]);
+      expect(cmd.scopes).toEqual(["deploy"]);
+    });
+
+    it("'api-key add' trims whitespace around comma-separated scopes", () => {
+      const cmd = parseArgs(["api-key", "add", "k", "--scopes", "deploy, read , keys"]);
+      expect(cmd.scopes).toEqual(["deploy", "read", "keys"]);
+    });
+
+    it("'api-key list' defaults --format=table and --include-revoked=false", () => {
+      const cmd = parseArgs(["api-key", "list"]);
+      expect(cmd.type).toBe(CommandType.apiKeyList);
+      expect(cmd.format).toBe("table");
+      expect(cmd.includeRevoked).toBe(false);
+    });
+
+    it("'api-key ls' (alias) with --format json --include-revoked", () => {
+      const cmd = parseArgs(["api-key", "ls", "--format", "json", "--include-revoked"]);
+      expect(cmd.type).toBe(CommandType.apiKeyList);
+      expect(cmd.format).toBe("json");
+      expect(cmd.includeRevoked).toBe(true);
+    });
+
+    it("'api-key patch <id> --name NewName' sets only newName", () => {
+      const cmd = parseArgs(["api-key", "patch", "uuid-abc", "--name", "NewName"]);
+      expect(cmd.type).toBe(CommandType.apiKeyPatch);
+      expect(cmd.id).toBe("uuid-abc");
+      expect(cmd.newName).toBe("NewName");
+      expect(cmd.scopes).toBeUndefined();
+      expect(cmd.ttl).toBeUndefined();
+    });
+
+    it("'api-key patch' with --scopes only", () => {
+      const cmd = parseArgs(["api-key", "patch", "uuid-abc", "--scopes", "read,apps"]);
+      expect(cmd.type).toBe(CommandType.apiKeyPatch);
+      expect(cmd.id).toBe("uuid-abc");
+      expect(cmd.scopes).toEqual(["read", "apps"]);
+      expect(cmd.newName).toBeUndefined();
+      expect(cmd.ttl).toBeUndefined();
+    });
+
+    it("'api-key patch' with --ttl only", () => {
+      const cmd = parseArgs(["api-key", "patch", "uuid-abc", "--ttl", "30d"]);
+      expect(cmd.type).toBe(CommandType.apiKeyPatch);
+      expect(cmd.ttl).toBe(30 * MS.day);
+    });
+
+    it("'api-key patch' with all three fields", () => {
+      const cmd = parseArgs(["api-key", "patch", "uuid-abc", "--name", "renamed", "--scopes", "deploy", "--ttl", "1y"]);
+      expect(cmd.id).toBe("uuid-abc");
+      expect(cmd.newName).toBe("renamed");
+      expect(cmd.scopes).toEqual(["deploy"]);
+      expect(cmd.ttl).toBe(365 * MS.day);
+    });
+
+    it("'api-key remove <id>'", () => {
+      const cmd = parseArgs(["api-key", "remove", "uuid-xyz"]);
+      expect(cmd.type).toBe(CommandType.apiKeyRemove);
+      expect(cmd.id).toBe("uuid-xyz");
+    });
+
+    it("'api-key rm' (alias)", () => {
+      const cmd = parseArgs(["api-key", "rm", "uuid-xyz"]);
+      expect(cmd.type).toBe(CommandType.apiKeyRemove);
+      expect(cmd.id).toBe("uuid-xyz");
+    });
+  });
+
   describe("app", () => {
     it("'app add <appName>'", () => {
       const cmd = parseArgs(["app", "add", "MyApp"]);
@@ -566,13 +650,7 @@ describe("command-parser", () => {
     });
 
     it("'release-react' accepts --extraHermesFlags as an array", () => {
-      const cmd = parseArgs([
-        "release-react",
-        "MyApp",
-        "android",
-        "--extraHermesFlags=-O",
-        "--extraHermesFlags=-emit-binary",
-      ]);
+      const cmd = parseArgs(["release-react", "MyApp", "android", "--extraHermesFlags=-O", "--extraHermesFlags=-emit-binary"]);
       expect(Array.isArray(cmd.extraHermesFlags)).toBe(true);
       expect(cmd.extraHermesFlags).toEqual(["-O", "-emit-binary"]);
     });
@@ -667,6 +745,21 @@ describe("command-parser", () => {
 
     it("'access-key add' with no name produces no command", () => {
       const cmd = parseArgs(["access-key", "add"]);
+      expect(cmd).toBeUndefined();
+    });
+
+    it("'api-key add' without --scopes produces no command", () => {
+      const cmd = parseArgs(["api-key", "add", "ci-deploy"]);
+      expect(cmd).toBeUndefined();
+    });
+
+    it("'api-key patch' without id produces no command", () => {
+      const cmd = parseArgs(["api-key", "patch", "--name", "x"]);
+      expect(cmd).toBeUndefined();
+    });
+
+    it("'api-key remove' without id produces no command", () => {
+      const cmd = parseArgs(["api-key", "remove"]);
       expect(cmd).toBeUndefined();
     });
 

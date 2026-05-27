@@ -112,6 +112,106 @@ function accessKeyRemove(commandName: string, yargs: yargs.Argv): void {
   addCommonConfiguration(yargs);
 }
 
+function apiKeyAdd(commandName: string, yargs: yargs.Argv): void {
+  isValidCommand = true;
+  yargs
+    .usage(USAGE_PREFIX + " api-key " + commandName + " <name> --scopes <list>")
+    .demand(/*count*/ 1, /*max*/ 1)
+    .example(
+      "api-key " + commandName + " github-actions-ci --scopes deploy,read",
+      'Creates a new API key named "github-actions-ci" with deploy + read scopes and no expiration'
+    )
+    .example(
+      "api-key " + commandName + " ci-deploy --scopes deploy --ttl 90d",
+      'Creates a new API key that expires in 90 days, scoped only to "deploy"'
+    )
+    .option("scopes", {
+      default: null,
+      demand: false,
+      description: "Comma-separated list of scopes (deploy, apps, keys, read). Required.",
+      type: "string",
+    })
+    .option("ttl", {
+      default: null,
+      demand: false,
+      description: "Duration the key remains valid for (e.g. 5m, 60d, 1y). Omit for no expiration.",
+      type: "string",
+    });
+
+  addCommonConfiguration(yargs);
+}
+
+function apiKeyPatch(commandName: string, yargs: yargs.Argv): void {
+  isValidCommand = true;
+  yargs
+    .usage(USAGE_PREFIX + " api-key " + commandName + " <id> [options]")
+    .demand(/*count*/ 1, /*max*/ 1)
+    .example("api-key " + commandName + " 5b3f1c8a-... --name renamed-key", "Renames the API key with the given id")
+    .example("api-key " + commandName + " 5b3f1c8a-... --scopes deploy,read,apps", "Replaces the scope set on the API key")
+    .example("api-key " + commandName + " 5b3f1c8a-... --ttl 1y", "Extends the API key expiration to one year from now")
+    .option("name", {
+      default: null,
+      demand: false,
+      description: "New display name for the API key",
+      type: "string",
+    })
+    .option("scopes", {
+      default: null,
+      demand: false,
+      description: "New comma-separated list of scopes (deploy, apps, keys, read)",
+      type: "string",
+    })
+    .option("ttl", {
+      default: null,
+      demand: false,
+      description: "New duration the key remains valid for (e.g. 5m, 60d, 1y)",
+      type: "string",
+    });
+
+  addCommonConfiguration(yargs);
+}
+
+function apiKeyList(commandName: string, yargs: yargs.Argv): void {
+  isValidCommand = true;
+  yargs
+    .usage(USAGE_PREFIX + " api-key " + commandName + " [options]")
+    .demand(/*count*/ 0, /*max*/ 0)
+    .example("api-key " + commandName, "Lists active API keys in tabular format")
+    .example("api-key " + commandName + " --format json", "Lists active API keys in JSON format")
+    .example("api-key " + commandName + " --include-revoked", "Includes revoked keys in the output")
+    .option("format", {
+      default: "table",
+      demand: false,
+      description: 'Output format to display API keys with ("json" or "table")',
+      type: "string",
+    })
+    .option("include-revoked", {
+      default: false,
+      demand: false,
+      description: "Include revoked API keys in the output",
+      type: "boolean",
+    });
+
+  addCommonConfiguration(yargs);
+}
+
+function apiKeyRemove(commandName: string, yargs: yargs.Argv): void {
+  isValidCommand = true;
+  yargs
+    .usage(USAGE_PREFIX + " api-key " + commandName + " <id>")
+    .demand(/*count*/ 1, /*max*/ 1)
+    .example("api-key " + commandName + " 5b3f1c8a-4d2e-4a7c-9a1b-8e6f3c2d1b0a", "Revokes the API key with the given id");
+
+  addCommonConfiguration(yargs);
+}
+
+function parseApiKeyScopes(input: string): string[] {
+  return String(input)
+    .split(",")
+    .map((s: string) => s.trim())
+    .filter((s: string) => s.length > 0);
+}
+
 function addCommonConfiguration(yargs: yargs.Argv): void {
   yargs
     .wrap(/*columnLimit*/ null)
@@ -291,6 +391,21 @@ yargs
       .command("list", "List the access keys associated with your account", (yargs: yargs.Argv) => accessKeyList("list", yargs))
       .command("ls", "List the access keys associated with your account", (yargs: yargs.Argv) => accessKeyList("ls", yargs))
       .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+
+    addCommonConfiguration(yargs);
+  })
+  .command("api-key", "View and manage the API keys associated with your tenant (for CI/CD)", (yargs: yargs.Argv) => {
+    isValidCommandCategory = true;
+    yargs
+      .usage(USAGE_PREFIX + " api-key <command>")
+      .demand(/*count*/ 2, /*max*/ 2)
+      .command("add", "Create a new API key for CI/CD use", (yargs: yargs.Argv) => apiKeyAdd("add", yargs))
+      .command("patch", "Update an existing API key's name, scopes, or expiration", (yargs: yargs.Argv) => apiKeyPatch("patch", yargs))
+      .command("list", "List the API keys associated with your tenant", (yargs: yargs.Argv) => apiKeyList("list", yargs))
+      .command("ls", "List the API keys associated with your tenant", (yargs: yargs.Argv) => apiKeyList("ls", yargs))
+      .command("remove", "Revoke an existing API key", (yargs: yargs.Argv) => apiKeyRemove("remove", yargs))
+      .command("rm", "Revoke an existing API key", (yargs: yargs.Argv) => apiKeyRemove("rm", yargs))
+      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand);
 
     addCommonConfiguration(yargs);
   })
@@ -790,15 +905,14 @@ yargs
         alias: "pod",
         default: null,
         demand: false,
-        description:  "Path to the cocopods config file (iOS only).",
+        description: "Path to the cocopods config file (iOS only).",
         type: "string",
       })
       .option("extraHermesFlags", {
         alias: "hf",
         default: [],
         demand: false,
-        description:
-          "Flags that get passed to Hermes, JavaScript to bytecode compiler. Can be specified multiple times.",
+        description: "Flags that get passed to Hermes, JavaScript to bytecode compiler. Can be specified multiple times.",
         type: "array",
       })
       .option("privateKeyPath", {
@@ -819,14 +933,16 @@ yargs
         alias: "xt",
         default: undefined,
         demand: false,
-        description: "Name of target (PBXNativeTarget) which specifies the binary version you want to target this release at (iOS only)",
+        description:
+          "Name of target (PBXNativeTarget) which specifies the binary version you want to target this release at (iOS only)",
         type: "string",
       })
       .option("buildConfigurationName", {
         alias: "c",
         default: undefined,
         demand: false,
-        description: "Name of build configuration which specifies the binary version you want to target this release at. For example, 'Debug' or 'Release' (iOS only)",
+        description:
+          "Name of build configuration which specifies the binary version you want to target this release at. For example, 'Debug' or 'Release' (iOS only)",
         type: "string",
       })
       .check((argv: any, aliases: { [aliases: string]: string }): any => {
@@ -948,6 +1064,59 @@ export function createCommand(): cli.ICommand {
         }
         break;
 
+      case "api-key":
+        switch (arg1) {
+          case "add":
+            if (arg2 && isDefined(argv["scopes"])) {
+              cmd = { type: cli.CommandType.apiKeyAdd };
+              const apiKeyAddCmd = <cli.IApiKeyAddCommand>cmd;
+              apiKeyAddCmd.name = arg2;
+              apiKeyAddCmd.scopes = parseApiKeyScopes(argv["scopes"] as any) as any;
+              const ttlOption: string = argv["ttl"] as any;
+              if (isDefined(ttlOption)) {
+                apiKeyAddCmd.ttl = parseDurationMilliseconds(ttlOption);
+              }
+            }
+            break;
+
+          case "patch":
+            if (arg2) {
+              cmd = { type: cli.CommandType.apiKeyPatch };
+              const apiKeyPatchCmd = <cli.IApiKeyPatchCommand>cmd;
+              apiKeyPatchCmd.id = arg2;
+
+              const nameOption: string = argv["name"] as any;
+              const scopesOption: string = argv["scopes"] as any;
+              const ttlOption: string = argv["ttl"] as any;
+              if (isDefined(nameOption)) {
+                apiKeyPatchCmd.newName = nameOption;
+              }
+              if (isDefined(scopesOption)) {
+                apiKeyPatchCmd.scopes = parseApiKeyScopes(scopesOption) as any;
+              }
+              if (isDefined(ttlOption)) {
+                apiKeyPatchCmd.ttl = parseDurationMilliseconds(ttlOption);
+              }
+            }
+            break;
+
+          case "list":
+          case "ls":
+            cmd = { type: cli.CommandType.apiKeyList };
+            (<cli.IApiKeyListCommand>cmd).format = argv["format"] as any;
+            (<cli.IApiKeyListCommand>cmd).includeRevoked = argv["include-revoked"] as any;
+            break;
+
+          case "remove":
+          case "rm":
+            if (arg2) {
+              cmd = { type: cli.CommandType.apiKeyRemove };
+              (<cli.IApiKeyRemoveCommand>cmd).id = arg2;
+            }
+            break;
+        }
+        break;
+
       case "app":
         switch (arg1) {
           case "add":
@@ -1049,10 +1218,9 @@ export function createCommand(): cli.ICommand {
 
               deploymentAddCommand.appName = arg2;
               deploymentAddCommand.deploymentName = arg3;
-              if(argv["key"]){
+              if (argv["key"]) {
                 deploymentAddCommand.key = argv["key"] as any;
               }
-
             }
             break;
 

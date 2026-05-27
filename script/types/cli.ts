@@ -1,12 +1,17 @@
 // Copyright (c) Aether. All rights reserved.
 
 import AccountManager = require("../management-sdk");
+import { ApiKeyScope } from "./rest-definitions";
 
 export enum CommandType {
   accessKeyAdd,
   accessKeyPatch,
   accessKeyList,
   accessKeyRemove,
+  apiKeyAdd,
+  apiKeyPatch,
+  apiKeyList,
+  apiKeyRemove,
   appAdd,
   appList,
   appRemove,
@@ -57,6 +62,28 @@ export interface IAccessKeyListCommand extends ICommand {
 
 export interface IAccessKeyRemoveCommand extends ICommand {
   accessKey: string;
+}
+
+export interface IApiKeyAddCommand extends ICommand {
+  name: string;
+  scopes: ApiKeyScope[];
+  ttl?: number;
+}
+
+export interface IApiKeyPatchCommand extends ICommand {
+  id: string;
+  newName?: string;
+  scopes?: ApiKeyScope[];
+  ttl?: number;
+}
+
+export interface IApiKeyListCommand extends ICommand {
+  format: string;
+  includeRevoked: boolean;
+}
+
+export interface IApiKeyRemoveCommand extends ICommand {
+  id: string;
 }
 
 export interface IAppAddCommand extends ICommand {
@@ -222,6 +249,6 @@ export type ReleaseHook = (
 ) => Promise<IReleaseCommand | void>;
 
 export interface ReleaseFile {
-  sourceLocation: string; // The current location of the file on disk
-  targetLocation: string; // The desired location of the file within the zip
+  sourceLocation: string;
+  targetLocation: string;
 }
