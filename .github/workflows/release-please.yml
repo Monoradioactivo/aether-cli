@@ -34,6 +34,14 @@ jobs:
           release-type: node
           package-name: "@aetherpush/cli"
 
+      - name: Keep release PR up to date with main
+        if: steps.release.outputs.pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          PR_NUMBER=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.number')
+          gh pr update-branch "$PR_NUMBER" || true
+
   publish:
     name: Publish to npm
     needs: release-please
