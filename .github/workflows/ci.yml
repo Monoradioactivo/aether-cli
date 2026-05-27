@@ -21,8 +21,8 @@ jobs:
       - name: Validate branch prefix
         run: |
           BRANCH="${{ github.head_ref }}"
-          if [[ "$BRANCH" =~ ^dependabot/ ]]; then
-            echo "Skipping branch name policy for Dependabot branch '$BRANCH'."
+          if [[ "$BRANCH" =~ ^dependabot/ ]] || [[ "$BRANCH" =~ ^release-please-- ]]; then
+            echo "Skipping branch name policy for bot branch '$BRANCH'."
             exit 0
           fi
           if [[ ! "$BRANCH" =~ ^(feat|fix|chore|refactor|docs)/ ]]; then
