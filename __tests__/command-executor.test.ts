@@ -1057,4 +1057,93 @@ describe("command-executor", () => {
       expect(mockSdkMethods.rollback).toHaveBeenCalledWith("MyApp", "Prod", "v3");
     });
   });
+
+  describe("force and destructive gating", () => {
+    beforeEach(() => {
+      executor.sdk = mockSdkMethods;
+    });
+
+    it("destructive command with force proceeds without prompting in non-interactive mode", async () => {
+      mockSdkMethods.removeApp.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.appRemove,
+        appName: "MyApp",
+        nonInteractive: true,
+        force: true,
+      });
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(mockSdkMethods.removeApp).toHaveBeenCalledWith("MyApp");
+    });
+
+    it("destructive command without force fails loud in non-interactive mode", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.appRemove,
+          appName: "MyApp",
+          nonInteractive: true,
+        })
+      ).rejects.toThrow(/destructive action/);
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(mockSdkMethods.removeApp).not.toHaveBeenCalled();
+    });
+
+    it("destructive command with force skips the prompt in interactive mode", async () => {
+      mockSdkMethods.removeApp.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.appRemove,
+        appName: "MyApp",
+        force: true,
+      });
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(mockSdkMethods.removeApp).toHaveBeenCalledWith("MyApp");
+    });
+
+    it("force skips the prompt for a non-destructive command in interactive mode", async () => {
+      mockSdkMethods.rollback.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.rollback,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        targetRelease: "v3",
+        force: true,
+      });
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(mockSdkMethods.rollback).toHaveBeenCalledWith("MyApp", "Prod", "v3");
+    });
+
+    it("login without accessKey fails loud in non-interactive mode", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.login,
+          accessKey: null,
+          serverUrl: null,
+          nonInteractive: true,
+        })
+      ).rejects.toThrow(/Interactive login is unavailable/);
+      expect(mockPromptGet).not.toHaveBeenCalled();
+    });
+
+    it("login with accessKey succeeds in non-interactive mode", async () => {
+      mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+      await executor.execute({
+        type: cli.CommandType.login,
+        accessKey: "valid-raw-key",
+        serverUrl: null,
+        nonInteractive: true,
+      });
+      expect(mockSdkMethods.isAuthenticated).toHaveBeenCalled();
+      expect(mockPromptGet).not.toHaveBeenCalled();
+    });
+
+    it("register fails loud in non-interactive mode", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.register,
+          serverUrl: null,
+          nonInteractive: true,
+        })
+      ).rejects.toThrow(/registration is unavailable/);
+      expect(mockPromptGet).not.toHaveBeenCalled();
+    });
+  });
 });

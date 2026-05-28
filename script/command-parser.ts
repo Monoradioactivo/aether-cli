@@ -230,6 +230,11 @@ function addCommonConfiguration(yargs: yargs.Argv): void {
       description: 'Run without interactive prompts. Auto-enabled when the CI environment variable is set to "true".',
       type: "boolean",
     })
+    .option("force", {
+      demand: false,
+      description: "Skip confirmation prompts. Required to run destructive commands in non-interactive mode.",
+      type: "boolean",
+    })
     .fail((msg: string) => {
       parseFailed = true;
       showHelp();
@@ -1459,6 +1464,11 @@ export function createCommand(): cli.ICommand {
       const nonInteractiveOption: boolean = argv["non-interactive"] as any;
       if (isDefined(nonInteractiveOption)) {
         cmd.nonInteractive = nonInteractiveOption;
+      }
+
+      const forceOption: boolean = argv["force"] as any;
+      if (isDefined(forceOption)) {
+        cmd.force = forceOption;
       }
     }
 

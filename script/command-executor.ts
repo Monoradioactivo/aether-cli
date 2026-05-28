@@ -126,6 +126,18 @@ function resolveNonInteractive(command: cli.ICommand): boolean {
   return false;
 }
 
+function confirmDestructive(command: cli.ICommand, message?: string): Promise<boolean> {
+  if (command.force) {
+    return Promise.resolve(true);
+  }
+
+  if (command.nonInteractive) {
+    return Promise.reject(new Error("This is a destructive action. Re-run with --force to confirm in non-interactive mode."));
+  }
+
+  return confirm(message);
+}
+
 function accessKeyAdd(command: cli.IAccessKeyAddCommand): Promise<void> {
   return sdk.addAccessKey(command.name, command.ttl).then((accessKey: AccessKeyWithSecret) => {
     log(`Successfully created the "${command.name}" access key: ${accessKey.name}`);
@@ -169,7 +181,7 @@ function accessKeyList(command: cli.IAccessKeyListCommand): Promise<void> {
 }
 
 function accessKeyRemove(command: cli.IAccessKeyRemoveCommand): Promise<void> {
-  return confirm().then((wasConfirmed: boolean) => {
+  return confirmDestructive(command).then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeAccessKey(command.accessKey).then((): void => {
         log(`Successfully removed the "${command.accessKey}" access key.`);
@@ -252,7 +264,7 @@ async function apiKeyList(command: cli.IApiKeyListCommand): Promise<void> {
 }
 
 async function apiKeyRemove(command: cli.IApiKeyRemoveCommand): Promise<void> {
-  const wasConfirmed: boolean = await confirm();
+  const wasConfirmed: boolean = await confirmDestructive(command);
   if (!wasConfirmed) {
     log("API key revocation cancelled.");
     return;
@@ -282,17 +294,18 @@ function appList(command: cli.IAppListCommand): Promise<void> {
 }
 
 function appRemove(command: cli.IAppRemoveCommand): Promise<void> {
-  return confirm("Are you sure you want to remove this app? Note that its deployment keys will be PERMANENTLY unrecoverable.").then(
-    (wasConfirmed: boolean) => {
-      if (wasConfirmed) {
-        return sdk.removeApp(command.appName).then((): void => {
-          log('Successfully removed the "' + command.appName + '" app.');
-        });
-      }
-
-      log("App removal cancelled.");
+  return confirmDestructive(
+    command,
+    "Are you sure you want to remove this app? Note that its deployment keys will be PERMANENTLY unrecoverable."
+  ).then((wasConfirmed: boolean) => {
+    if (wasConfirmed) {
+      return sdk.removeApp(command.appName).then((): void => {
+        log('Successfully removed the "' + command.appName + '" app.');
+      });
     }
-  );
+
+    log("App removal cancelled.");
+  });
 }
 
 function appRename(command: cli.IAppRenameCommand): Promise<void> {
@@ -310,7 +323,7 @@ export const createEmptyTempReleaseFolder = (folderPath: string) => {
 function appTransfer(command: cli.IAppTransferCommand): Promise<void> {
   throwForInvalidEmail(command.email);
 
-  return confirm().then((wasConfirmed: boolean) => {
+  return confirmDestructive(command).then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.transferApp(command.appName, command.email).then((): void => {
         log(
@@ -342,7 +355,7 @@ function listCollaborators(command: cli.ICollaboratorListCommand): Promise<void>
 function removeCollaborator(command: cli.ICollaboratorRemoveCommand): Promise<void> {
   throwForInvalidEmail(command.email);
 
-  return confirm(undefined, command.nonInteractive).then((wasConfirmed: boolean) => {
+  return confirm(undefined, command.nonInteractive || !!command.force).then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeCollaborator(command.appName, command.email).then((): void => {
         log('Successfully removed "' + command.email + '" as a collaborator from the app "' + command.appName + '".');
@@ -390,7 +403,7 @@ function deploymentAdd(command: cli.IDeploymentAddCommand): Promise<void> {
 }
 
 function deploymentHistoryClear(command: cli.IDeploymentHistoryClearCommand): Promise<void> {
-  return confirm().then((wasConfirmed: boolean) => {
+  return confirmDestructive(command).then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.clearDeploymentHistory(command.appName, command.deploymentName).then((): void => {
         log(
@@ -444,7 +457,8 @@ export const deploymentList = (command: cli.IDeploymentListCommand, showPackage:
 };
 
 function deploymentRemove(command: cli.IDeploymentRemoveCommand): Promise<void> {
-  return confirm(
+  return confirmDestructive(
+    command,
     "Are you sure you want to remove this deployment? Note that its deployment key will be PERMANENTLY unrecoverable."
   ).then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
@@ -673,6 +687,10 @@ async function login(command: cli.ILoginCommand): Promise<void> {
     }
     serializeConnectionInfo(command.accessKey, /*preserveAccessKeyOnLogout*/ true, serverUrl);
     return;
+  }
+
+  if (command.nonInteractive) {
+    throw new Error("Interactive login is unavailable in non-interactive mode. Re-run with --accessKey <key>.");
   }
 
   const { email, password } = await promptForLoginCredentials();
@@ -1218,6 +1236,11 @@ function printTable(columnNames: string[], readData: (dataSource: any[]) => void
 
 async function register(command: cli.IRegisterCommand): Promise<void> {
   const serverUrl = command.serverUrl || DEFAULT_AETHER_SERVER_URL;
+
+  if (command.nonInteractive) {
+    throw new Error("Account registration is unavailable in non-interactive mode.");
+  }
+
   const { email, name, password, confirmPassword } = await promptForRegistration();
 
   if (!email) {
@@ -1488,7 +1511,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
 };
 
 function rollback(command: cli.IRollbackCommand): Promise<void> {
-  return confirm(undefined, command.nonInteractive).then((wasConfirmed: boolean) => {
+  return confirm(undefined, command.nonInteractive || !!command.force).then((wasConfirmed: boolean) => {
     if (!wasConfirmed) {
       log("Rollback cancelled.");
       return;
@@ -1653,7 +1676,7 @@ function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   if (os.hostname() === command.machineName) {
     throw new Error("Cannot remove the current login session via this command. Please run 'aether logout' instead.");
   } else {
-    return confirm(undefined, command.nonInteractive).then((wasConfirmed: boolean) => {
+    return confirm(undefined, command.nonInteractive || !!command.force).then((wasConfirmed: boolean) => {
       if (wasConfirmed) {
         return sdk.removeSessions(command.machineName).then((): void => {
           log(`Successfully removed the login session for "${command.machineName}".`);
