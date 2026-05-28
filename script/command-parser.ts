@@ -15,6 +15,14 @@ let isValidCommandCategory = false;
 // Commands are the verb following the command category (e.g.:  "add" in "app add").
 let isValidCommand = false;
 let wasHelpShown = false;
+export let parseFailed = false;
+
+export function resetParserState(): void {
+  isValidCommandCategory = false;
+  isValidCommand = false;
+  wasHelpShown = false;
+  parseFailed = false;
+}
 
 export function showHelp(showRootDescription?: boolean): void {
   if (!wasHelpShown) {
@@ -216,7 +224,10 @@ function addCommonConfiguration(yargs: yargs.Argv): void {
   yargs
     .wrap(/*columnLimit*/ null)
     .string("_") // Interpret non-hyphenated arguments as strings (e.g. an app version of '1.10').
-    .fail((msg: string) => showHelp()); // Suppress the default error message.
+    .fail((msg: string) => {
+      parseFailed = true;
+      showHelp();
+    }); // Suppress the default error message.
 }
 
 function appList(commandName: string, yargs: yargs.Argv): void {
@@ -998,7 +1009,10 @@ yargs
   .alias("v", "version")
   .version(packageJson.version)
   .wrap(/*columnLimit*/ null)
-  .fail((msg: string) => showHelp(/*showRootDescription*/ true)).argv; // Suppress the default error message.
+  .fail((msg: string) => {
+    parseFailed = true;
+    showHelp(/*showRootDescription*/ true);
+  }).argv; // Suppress the default error message.
 
 export function createCommand(): cli.ICommand {
   let cmd: cli.ICommand;
@@ -1435,8 +1449,12 @@ export function createCommand(): cli.ICommand {
         break;
     }
 
+    parseFailed = wasHelpShown || cmd === undefined;
     return cmd;
   }
+
+  parseFailed = wasHelpShown && (!argv._ || argv._.length > 0);
+  return cmd;
 }
 
 function isValidRollout(args: any): boolean {

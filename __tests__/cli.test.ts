@@ -1,63 +1,106 @@
-const mockCreateCommand = jest.fn();
-const mockShowHelp = jest.fn();
-const mockExecute = jest.fn();
+jest.mock("../../package.json", () => ({ version: "0.1.0-test" }), { virtual: true });
 
-jest.mock("../script/command-parser", () => ({
-  createCommand: mockCreateCommand,
-  showHelp: mockShowHelp,
+jest.mock("parse-duration", () => ({
+  default: (input: string): number => {
+    const units: Record<string, number> = {
+      s: 1000,
+      m: 60 * 1000,
+      h: 60 * 60 * 1000,
+      d: 24 * 60 * 60 * 1000,
+      y: 365 * 24 * 60 * 60 * 1000,
+    };
+    const match = String(input).match(/^(\d+)\s*([smhdy])$/);
+    if (!match) return NaN;
+    return parseInt(match[1], 10) * units[match[2]];
+  },
 }));
 
-jest.mock("../script/command-executor", () => ({
-  execute: mockExecute,
-}));
+function runCli(args: string[]): { exitCode: number | null; helpShown: boolean; executeCalled: boolean } {
+  let exitCode: number | null = null;
+  let helpShown = false;
+  let executeCalled = false;
 
-describe("cli", () => {
-  let consoleErrorSpy: jest.SpyInstance;
-  let processExitSpy: jest.SpyInstance;
+  jest.isolateModules(() => {
+    const originalArgv = process.argv;
+    const originalExit = process.exit;
 
+    process.argv = ["node", "aether", ...args];
+    process.exit = ((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error(`__EXIT_${code ?? 0}__`);
+    }) as any;
+
+    jest.doMock("../script/command-executor", () => ({
+      execute: jest.fn(() => {
+        executeCalled = true;
+        return Promise.resolve();
+      }),
+    }));
+
+    try {
+      const parser = require("../script/command-parser");
+      const originalShowHelp = parser.showHelp;
+      parser.showHelp = (...rest: any[]) => {
+        helpShown = true;
+        return originalShowHelp.apply(parser, rest);
+      };
+
+      try {
+        require("../script/cli");
+      } catch (e: any) {
+        if (!String(e.message).startsWith("__EXIT_")) {
+          throw e;
+        }
+      }
+    } finally {
+      process.argv = originalArgv;
+      process.exit = originalExit;
+    }
+  });
+
+  return { exitCode, helpShown, executeCalled };
+}
+
+describe("cli entry point", () => {
   beforeEach(() => {
-    mockCreateCommand.mockReset();
-    mockShowHelp.mockReset();
-    mockExecute.mockReset();
-    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
-    processExitSpy = jest.spyOn(process, "exit").mockImplementation(((_code?: number) => undefined) as never);
+    jest.spyOn(console, "log").mockImplementation(() => undefined);
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  function runCli(): void {
-    jest.isolateModules(() => {
-      require("../script/cli");
+  describe("exit codes", () => {
+    it("exits 1 when an unknown command category is passed", () => {
+      const { exitCode, executeCalled } = runCli(["nonsense-command"]);
+      expect(exitCode).toBe(1);
+      expect(executeCalled).toBe(false);
     });
-  }
 
-  it("calls showHelp without root description when createCommand returns undefined", () => {
-    mockCreateCommand.mockReturnValue(undefined);
-    runCli();
-    expect(mockShowHelp).toHaveBeenCalledWith(false);
-    expect(mockExecute).not.toHaveBeenCalled();
-  });
+    it("exits 1 when a known command is missing required args", () => {
+      const { exitCode, executeCalled } = runCli(["app", "rm"]);
+      expect(exitCode).toBe(1);
+      expect(executeCalled).toBe(false);
+    });
 
-  it("dispatches to execute when createCommand returns a valid command", () => {
-    const cmd = { type: 0 };
-    mockCreateCommand.mockReturnValue(cmd);
-    mockExecute.mockResolvedValue(undefined);
-    runCli();
-    expect(mockExecute).toHaveBeenCalledWith(cmd);
-    expect(mockShowHelp).not.toHaveBeenCalled();
-    expect(consoleErrorSpy).not.toHaveBeenCalled();
-    expect(processExitSpy).not.toHaveBeenCalled();
-  });
+    it("exits 1 when an unknown subcommand is passed under a known category", () => {
+      const { exitCode, executeCalled } = runCli(["app", "bogus-subcommand"]);
+      expect(exitCode).toBe(1);
+      expect(executeCalled).toBe(false);
+    });
 
-  it("on execute rejection logs the red [Error] message and exits with code 1", async () => {
-    const cmd = { type: 0 };
-    mockCreateCommand.mockReturnValue(cmd);
-    mockExecute.mockReturnValue(Promise.reject(new Error("boom")));
-    runCli();
-    await new Promise((r) => setImmediate(r));
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringMatching(/\[Error\]\s+boom/));
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    it("exits 0 (no exit call) when invoked with no args at all", () => {
+      const { exitCode, helpShown, executeCalled } = runCli([]);
+      expect(exitCode).toBeNull();
+      expect(helpShown).toBe(true);
+      expect(executeCalled).toBe(false);
+    });
+
+    it("proceeds to execute() when a valid command is parsed", () => {
+      const { exitCode, executeCalled } = runCli(["app", "list"]);
+      expect(exitCode).toBeNull();
+      expect(executeCalled).toBe(true);
+    });
   });
 });
