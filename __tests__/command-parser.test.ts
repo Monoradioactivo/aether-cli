@@ -861,4 +861,24 @@ describe("command-parser", () => {
       expect(cmd.nonInteractive).toBe(true);
     });
   });
+
+  describe("force flag", () => {
+    it("leaves force undefined when the flag is absent", () => {
+      const cmd = parseArgs(["app", "ls"]);
+      expect(cmd.force).toBeUndefined();
+    });
+
+    it("sets force true with --force", () => {
+      const cmd = parseArgs(["app", "ls", "--force"]);
+      expect(cmd.force).toBe(true);
+    });
+
+    it("carries force onto a destructive command alongside --ci", () => {
+      const cmd = parseArgs(["app", "rm", "MyApp", "--ci", "--force"]);
+      expect(cmd.type).toBe(CommandType.appRemove);
+      expect(cmd.appName).toBe("MyApp");
+      expect(cmd.nonInteractive).toBe(true);
+      expect(cmd.force).toBe(true);
+    });
+  });
 });
