@@ -39,6 +39,7 @@ import {
 } from "../script/types";
 import { getAndroidHermesEnabled, getiOSHermesEnabled, runHermesEmitBinaryCommand, isValidVersion } from "./react-native-utils";
 import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./utils/file-utils";
+import { enrichDescriptionWithCiMetadata } from "./utils/ci-metadata";
 
 const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".aether", "config.json");
 const DEFAULT_AETHER_SERVER_URL = "https://api-staging.aetherpush.com";
@@ -534,6 +535,15 @@ function deserializeConnectionInfo(): ILoginConnectionInfo {
 export function execute(command: cli.ICommand) {
   connectionInfo = deserializeConnectionInfo();
   command.nonInteractive = resolveNonInteractive(command);
+
+  if (
+    command.type === cli.CommandType.release ||
+    command.type === cli.CommandType.releaseReact ||
+    command.type === cli.CommandType.promote ||
+    command.type === cli.CommandType.patch
+  ) {
+    enrichDescriptionWithCiMetadata(command);
+  }
 
   return Promise.resolve().then(() => {
     switch (command.type) {

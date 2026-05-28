@@ -235,6 +235,12 @@ function addCommonConfiguration(yargs: yargs.Argv): void {
       description: "Skip confirmation prompts. Required to run destructive commands in non-interactive mode.",
       type: "boolean",
     })
+    .option("ci-metadata", {
+      demand: false,
+      description:
+        "Auto-enrich release/promote/patch descriptions with CI metadata when running in a supported CI provider. Pass --no-ci-metadata to opt out.",
+      type: "boolean",
+    })
     .fail((msg: string) => {
       parseFailed = true;
       showHelp();
@@ -1469,6 +1475,11 @@ export function createCommand(): cli.ICommand {
       const forceOption: boolean = argv["force"] as any;
       if (isDefined(forceOption)) {
         cmd.force = forceOption;
+      }
+
+      const ciMetadataOption: boolean = argv["ci-metadata"] as any;
+      if (isDefined(ciMetadataOption)) {
+        cmd.ciMetadata = ciMetadataOption;
       }
     }
 

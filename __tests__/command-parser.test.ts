@@ -881,4 +881,21 @@ describe("command-parser", () => {
       expect(cmd.force).toBe(true);
     });
   });
+
+  describe("ci-metadata flag", () => {
+    it("leaves ciMetadata undefined when the flag is absent", () => {
+      const cmd = parseArgs(["app", "ls"]);
+      expect(cmd.ciMetadata).toBeUndefined();
+    });
+
+    it("sets ciMetadata true with --ci-metadata", () => {
+      const cmd = parseArgs(["app", "ls", "--ci-metadata"]);
+      expect(cmd.ciMetadata).toBe(true);
+    });
+
+    it("sets ciMetadata false with --no-ci-metadata", () => {
+      const cmd = parseArgs(["app", "ls", "--no-ci-metadata"]);
+      expect(cmd.ciMetadata).toBe(false);
+    });
+  });
 });

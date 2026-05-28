@@ -45,6 +45,7 @@ export interface ICommand {
   type: CommandType;
   nonInteractive?: boolean;
   force?: boolean;
+  ciMetadata?: boolean;
 }
 
 export interface IAccessKeyAddCommand extends ICommand {
