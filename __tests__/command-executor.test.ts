@@ -91,14 +91,43 @@ describe("command-executor", () => {
   let mkdirSyncSpy: jest.SpyInstance;
   let writeFileSyncSpy: jest.SpyInstance;
   let fetchSpy: jest.SpyInstance;
-  let savedCI: string | undefined;
+
+  const CI_ENV_VARS = [
+    "CI",
+    "GITHUB_ACTIONS",
+    "GITHUB_SHA",
+    "GITHUB_REF",
+    "GITHUB_REF_NAME",
+    "GITHUB_SERVER_URL",
+    "GITHUB_REPOSITORY",
+    "GITHUB_RUN_ID",
+    "GITLAB_CI",
+    "CI_COMMIT_SHA",
+    "CI_COMMIT_REF_NAME",
+    "CI_MERGE_REQUEST_IID",
+    "CI_JOB_URL",
+    "CIRCLECI",
+    "CIRCLE_SHA1",
+    "CIRCLE_BRANCH",
+    "CIRCLE_PR_NUMBER",
+    "CIRCLE_BUILD_URL",
+    "JENKINS_URL",
+    "GIT_COMMIT",
+    "GIT_BRANCH",
+    "CHANGE_ID",
+    "BUILD_URL",
+  ];
+  let savedCiEnv: Record<string, string | undefined>;
 
   beforeEach(() => {
     resetSdkMocks();
     mockPromptGet.mockReset();
 
-    savedCI = process.env.CI;
-    delete process.env.CI;
+    savedCiEnv = {};
+    for (const key of CI_ENV_VARS) {
+      savedCiEnv[key] = process.env[key];
+      delete process.env[key];
+    }
 
     consoleLogSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
@@ -120,10 +149,12 @@ describe("command-executor", () => {
     jest.restoreAllMocks();
     executor.sdk = null;
 
-    if (savedCI === undefined) {
-      delete process.env.CI;
-    } else {
-      process.env.CI = savedCI;
+    for (const key of CI_ENV_VARS) {
+      if (savedCiEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = savedCiEnv[key];
+      }
     }
   });
 
@@ -1144,6 +1175,91 @@ describe("command-executor", () => {
         })
       ).rejects.toThrow(/registration is unavailable/);
       expect(mockPromptGet).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("ci metadata enrichment", () => {
+    beforeEach(() => {
+      executor.sdk = mockSdkMethods;
+      mockSdkMethods.promote.mockResolvedValue(undefined);
+      mockSdkMethods.patchRelease.mockResolvedValue(undefined);
+    });
+
+    function setGithubEnv(): void {
+      process.env.GITHUB_ACTIONS = "true";
+      process.env.GITHUB_SHA = "abc1234567";
+      process.env.GITHUB_REF_NAME = "main";
+    }
+
+    it("appends CI metadata to a user-provided description on promote", async () => {
+      setGithubEnv();
+      await executor.execute({
+        type: cli.CommandType.promote,
+        appName: "MyApp",
+        sourceDeploymentName: "Staging",
+        destDeploymentName: "Production",
+        description: "Fix auth token timeout",
+      });
+
+      expect(mockSdkMethods.promote).toHaveBeenCalledTimes(1);
+      const packageInfo = mockSdkMethods.promote.mock.calls[0][3];
+      expect(packageInfo.description).toBe("Fix auth token timeout\n\n[ci=github sha=abc1234 branch=main]");
+    });
+
+    it("uses CI metadata as the description when none is provided", async () => {
+      setGithubEnv();
+      await executor.execute({
+        type: cli.CommandType.promote,
+        appName: "MyApp",
+        sourceDeploymentName: "Staging",
+        destDeploymentName: "Production",
+      });
+
+      const packageInfo = mockSdkMethods.promote.mock.calls[0][3];
+      expect(packageInfo.description).toBe("[ci=github sha=abc1234 branch=main]");
+    });
+
+    it("skips enrichment when ciMetadata is false", async () => {
+      setGithubEnv();
+      await executor.execute({
+        type: cli.CommandType.promote,
+        appName: "MyApp",
+        sourceDeploymentName: "Staging",
+        destDeploymentName: "Production",
+        description: "Fix auth token timeout",
+        ciMetadata: false,
+      });
+
+      const packageInfo = mockSdkMethods.promote.mock.calls[0][3];
+      expect(packageInfo.description).toBe("Fix auth token timeout");
+    });
+
+    it("leaves the description untouched when no CI provider is detected", async () => {
+      await executor.execute({
+        type: cli.CommandType.promote,
+        appName: "MyApp",
+        sourceDeploymentName: "Staging",
+        destDeploymentName: "Production",
+        description: "Fix auth token timeout",
+      });
+
+      const packageInfo = mockSdkMethods.promote.mock.calls[0][3];
+      expect(packageInfo.description).toBe("Fix auth token timeout");
+    });
+
+    it("enriches a patch command as well", async () => {
+      setGithubEnv();
+      await executor.execute({
+        type: cli.CommandType.patch,
+        appName: "MyApp",
+        deploymentName: "Production",
+        label: "v3",
+        description: "Bumped rollout",
+      });
+
+      expect(mockSdkMethods.patchRelease).toHaveBeenCalledTimes(1);
+      const packageInfo = mockSdkMethods.patchRelease.mock.calls[0][3];
+      expect(packageInfo.description).toBe("Bumped rollout\n\n[ci=github sha=abc1234 branch=main]");
     });
   });
 });
