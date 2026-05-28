@@ -91,10 +91,14 @@ describe("command-executor", () => {
   let mkdirSyncSpy: jest.SpyInstance;
   let writeFileSyncSpy: jest.SpyInstance;
   let fetchSpy: jest.SpyInstance;
+  let savedCI: string | undefined;
 
   beforeEach(() => {
     resetSdkMocks();
     mockPromptGet.mockReset();
+
+    savedCI = process.env.CI;
+    delete process.env.CI;
 
     consoleLogSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
@@ -115,6 +119,12 @@ describe("command-executor", () => {
   afterEach(() => {
     jest.restoreAllMocks();
     executor.sdk = null;
+
+    if (savedCI === undefined) {
+      delete process.env.CI;
+    } else {
+      process.env.CI = savedCI;
+    }
   });
 
   describe("execute dispatch", () => {
@@ -967,6 +977,84 @@ describe("command-executor", () => {
       const result = await executor.confirm();
       expect(result).toBe(false);
       expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid response: "maybe"'));
+    });
+  });
+
+  describe("non-interactive mode", () => {
+    beforeEach(() => {
+      executor.sdk = mockSdkMethods;
+    });
+
+    it("confirm short-circuits to true without prompting when autoConfirm is set", async () => {
+      const result = await executor.confirm(undefined, true);
+      expect(result).toBe(true);
+      expect(mockPromptGet).not.toHaveBeenCalled();
+    });
+
+    it("rollback with nonInteractive skips the prompt and proceeds", async () => {
+      mockSdkMethods.rollback.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.rollback,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        targetRelease: "v3",
+        nonInteractive: true,
+      });
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(mockSdkMethods.rollback).toHaveBeenCalledWith("MyApp", "Prod", "v3");
+    });
+
+    it("sessionRemove with nonInteractive skips the prompt and proceeds", async () => {
+      mockSdkMethods.removeSessions.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.sessionRemove,
+        machineName: "Other Machine That Does Not Exist Here",
+        nonInteractive: true,
+      });
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(mockSdkMethods.removeSessions).toHaveBeenCalledWith("Other Machine That Does Not Exist Here");
+    });
+
+    it("collaborator remove with nonInteractive skips the prompt and proceeds", async () => {
+      mockSdkMethods.removeCollaborator.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.collaboratorRemove,
+        appName: "MyApp",
+        email: "bob@example.com",
+        nonInteractive: true,
+      });
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(mockSdkMethods.removeCollaborator).toHaveBeenCalledWith("MyApp", "bob@example.com");
+    });
+
+    it("auto-enables non-interactive when CI is true and announces on stderr", async () => {
+      process.env.CI = "true";
+      mockSdkMethods.rollback.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.rollback,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        targetRelease: "v3",
+      });
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Detected CI environment"));
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(mockSdkMethods.rollback).toHaveBeenCalledWith("MyApp", "Prod", "v3");
+    });
+
+    it("explicit nonInteractive false overrides CI auto-detect and keeps prompting", async () => {
+      process.env.CI = "true";
+      setConfirmResponse("y");
+      mockSdkMethods.rollback.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.rollback,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        targetRelease: "v3",
+        nonInteractive: false,
+      });
+      expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining("Detected CI environment"));
+      expect(mockPromptGet).toHaveBeenCalled();
+      expect(mockSdkMethods.rollback).toHaveBeenCalledWith("MyApp", "Prod", "v3");
     });
   });
 });

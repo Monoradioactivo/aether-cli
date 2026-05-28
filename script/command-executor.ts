@@ -76,7 +76,11 @@ export const execSync = childProcess.execSync;
 
 let connectionInfo: ILoginConnectionInfo;
 
-export const confirm = (message: string = "Are you sure?"): Promise<boolean> => {
+export const confirm = (message: string = "Are you sure?", autoConfirm: boolean = false): Promise<boolean> => {
+  if (autoConfirm) {
+    return Promise.resolve(true);
+  }
+
   message += " (y/N):";
   return new Promise<boolean>((resolve, reject): void => {
     prompt.message = "";
@@ -108,6 +112,19 @@ export const confirm = (message: string = "Are you sure?"): Promise<boolean> => 
     );
   });
 };
+
+function resolveNonInteractive(command: cli.ICommand): boolean {
+  if (command.nonInteractive !== undefined) {
+    return command.nonInteractive;
+  }
+
+  if (process.env.CI === "true") {
+    console.error("[Aether] Detected CI environment — running in non-interactive mode.");
+    return true;
+  }
+
+  return false;
+}
 
 function accessKeyAdd(command: cli.IAccessKeyAddCommand): Promise<void> {
   return sdk.addAccessKey(command.name, command.ttl).then((accessKey: AccessKeyWithSecret) => {
@@ -325,7 +342,7 @@ function listCollaborators(command: cli.ICollaboratorListCommand): Promise<void>
 function removeCollaborator(command: cli.ICollaboratorRemoveCommand): Promise<void> {
   throwForInvalidEmail(command.email);
 
-  return confirm().then((wasConfirmed: boolean) => {
+  return confirm(undefined, command.nonInteractive).then((wasConfirmed: boolean) => {
     if (wasConfirmed) {
       return sdk.removeCollaborator(command.appName, command.email).then((): void => {
         log('Successfully removed "' + command.email + '" as a collaborator from the app "' + command.appName + '".');
@@ -502,6 +519,7 @@ function deserializeConnectionInfo(): ILoginConnectionInfo {
 
 export function execute(command: cli.ICommand) {
   connectionInfo = deserializeConnectionInfo();
+  command.nonInteractive = resolveNonInteractive(command);
 
   return Promise.resolve().then(() => {
     switch (command.type) {
@@ -1470,7 +1488,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
 };
 
 function rollback(command: cli.IRollbackCommand): Promise<void> {
-  return confirm().then((wasConfirmed: boolean) => {
+  return confirm(undefined, command.nonInteractive).then((wasConfirmed: boolean) => {
     if (!wasConfirmed) {
       log("Rollback cancelled.");
       return;
@@ -1635,7 +1653,7 @@ function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   if (os.hostname() === command.machineName) {
     throw new Error("Cannot remove the current login session via this command. Please run 'aether logout' instead.");
   } else {
-    return confirm().then((wasConfirmed: boolean) => {
+    return confirm(undefined, command.nonInteractive).then((wasConfirmed: boolean) => {
       if (wasConfirmed) {
         return sdk.removeSessions(command.machineName).then((): void => {
           log(`Successfully removed the login session for "${command.machineName}".`);

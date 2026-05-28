@@ -831,4 +831,34 @@ describe("command-parser", () => {
       expect(cmd).toBeUndefined();
     });
   });
+
+  describe("non-interactive flag", () => {
+    it("leaves nonInteractive undefined when the flag is absent", () => {
+      const cmd = parseArgs(["app", "ls"]);
+      expect(cmd.type).toBe(CommandType.appList);
+      expect(cmd.nonInteractive).toBeUndefined();
+    });
+
+    it("sets nonInteractive true with --non-interactive", () => {
+      const cmd = parseArgs(["app", "ls", "--non-interactive"]);
+      expect(cmd.nonInteractive).toBe(true);
+    });
+
+    it("sets nonInteractive true with the --ci alias", () => {
+      const cmd = parseArgs(["app", "ls", "--ci"]);
+      expect(cmd.nonInteractive).toBe(true);
+    });
+
+    it("sets nonInteractive false with --no-non-interactive", () => {
+      const cmd = parseArgs(["app", "ls", "--no-non-interactive"]);
+      expect(cmd.nonInteractive).toBe(false);
+    });
+
+    it("carries the flag onto a destructive command", () => {
+      const cmd = parseArgs(["app", "rm", "MyApp", "--ci"]);
+      expect(cmd.type).toBe(CommandType.appRemove);
+      expect(cmd.appName).toBe("MyApp");
+      expect(cmd.nonInteractive).toBe(true);
+    });
+  });
 });
