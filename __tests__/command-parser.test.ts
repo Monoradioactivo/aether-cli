@@ -96,6 +96,64 @@ describe("command-parser", () => {
     });
   });
 
+  function parseArgsWithState(args: string[]): { cmd: any; parseFailed: boolean } {
+    let cmd: any;
+    let parseFailed = false;
+    jest.isolateModules(() => {
+      const originalArgv = process.argv;
+      process.argv = ["node", "aether", ...args];
+      try {
+        const mod = require("../script/command-parser");
+        cmd = mod.createCommand();
+        parseFailed = mod.parseFailed;
+      } finally {
+        process.argv = originalArgv;
+      }
+    });
+    return { cmd, parseFailed };
+  }
+
+  describe("parseFailed flag", () => {
+    it("is false for a valid command", () => {
+      const { cmd, parseFailed } = parseArgsWithState(["app", "list"]);
+      expect(cmd).toBeDefined();
+      expect(parseFailed).toBe(false);
+    });
+
+    it("is true for an unknown top-level command category", () => {
+      const { parseFailed } = parseArgsWithState(["nonsense-command"]);
+      expect(parseFailed).toBe(true);
+    });
+
+    it("is true when a known command is missing required positional args", () => {
+      const { parseFailed } = parseArgsWithState(["app", "rm"]);
+      expect(parseFailed).toBe(true);
+    });
+
+    it("is true when a known command is given too many positional args", () => {
+      const { parseFailed } = parseArgsWithState(["app", "rm", "MyApp", "ExtraArg"]);
+      expect(parseFailed).toBe(true);
+    });
+
+    it("is true for an unknown subcommand under a known category", () => {
+      const { parseFailed } = parseArgsWithState(["app", "bogus-subcommand"]);
+      expect(parseFailed).toBe(true);
+    });
+
+    it("is false when invoked with no args at all (user wants help)", () => {
+      const { cmd, parseFailed } = parseArgsWithState([]);
+      expect(cmd).toBeUndefined();
+      expect(parseFailed).toBe(false);
+    });
+
+    it("is reset between invocations via isolateModules", () => {
+      const first = parseArgsWithState(["nonsense"]);
+      expect(first.parseFailed).toBe(true);
+      const second = parseArgsWithState(["app", "list"]);
+      expect(second.parseFailed).toBe(false);
+    });
+  });
+
   describe("api-key", () => {
     it("'api-key add <name> --scopes deploy,read' parses scopes as array", () => {
       const cmd = parseArgs(["api-key", "add", "ci-deploy", "--scopes", "deploy,read"]);

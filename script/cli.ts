@@ -6,8 +6,12 @@ import * as parser from "./command-parser";
 import * as execute from "./command-executor";
 import * as chalk from "chalk";
 
-function run() {
+function run(): void {
   const command = parser.createCommand();
+
+  if (parser.parseFailed) {
+    process.exit(1);
+  }
 
   if (!command) {
     parser.showHelp(/*showRootDescription*/ false);
