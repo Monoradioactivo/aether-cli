@@ -43,6 +43,7 @@ export enum CommandType {
 
 export interface ICommand {
   type: CommandType;
+  nonInteractive?: boolean;
 }
 
 export interface IAccessKeyAddCommand extends ICommand {

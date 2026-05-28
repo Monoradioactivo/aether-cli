@@ -224,6 +224,12 @@ function addCommonConfiguration(yargs: yargs.Argv): void {
   yargs
     .wrap(/*columnLimit*/ null)
     .string("_") // Interpret non-hyphenated arguments as strings (e.g. an app version of '1.10').
+    .option("non-interactive", {
+      alias: "ci",
+      demand: false,
+      description: 'Run without interactive prompts. Auto-enabled when the CI environment variable is set to "true".',
+      type: "boolean",
+    })
     .fail((msg: string) => {
       parseFailed = true;
       showHelp();
@@ -1447,6 +1453,13 @@ export function createCommand(): cli.ICommand {
       case "whoami":
         cmd = { type: cli.CommandType.whoami };
         break;
+    }
+
+    if (cmd) {
+      const nonInteractiveOption: boolean = argv["non-interactive"] as any;
+      if (isDefined(nonInteractiveOption)) {
+        cmd.nonInteractive = nonInteractiveOption;
+      }
     }
 
     parseFailed = wasHelpShown || cmd === undefined;
