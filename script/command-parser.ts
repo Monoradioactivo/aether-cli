@@ -797,6 +797,12 @@ yargs
         description: "Percentage of users this release should be available to",
         type: "string",
       })
+      .option("json", {
+        demand: false,
+        description:
+          "Emit a JSON object describing the released package as the last line of stdout. Progress messages route to stderr.",
+        type: "boolean",
+      })
       .check((argv: any, aliases: { [aliases: string]: string }): any => {
         return checkValidReleaseOptions(argv);
       });
@@ -972,6 +978,12 @@ yargs
         description:
           "Name of build configuration which specifies the binary version you want to target this release at. For example, 'Debug' or 'Release' (iOS only)",
         type: "string",
+      })
+      .option("json", {
+        demand: false,
+        description:
+          "Emit a JSON object describing the released package as the last line of stdout. Progress messages route to stderr.",
+        type: "boolean",
       })
       .check((argv: any, aliases: { [aliases: string]: string }): any => {
         return checkValidReleaseOptions(argv);
@@ -1392,6 +1404,7 @@ export function createCommand(): cli.ICommand {
           releaseCommand.mandatory = argv["mandatory"] as any;
           releaseCommand.noDuplicateReleaseError = argv["noDuplicateReleaseError"] as any;
           releaseCommand.rollout = getRolloutValue(argv["rollout"] as any);
+          releaseCommand.json = argv["json"] as any;
         }
         break;
 
@@ -1426,6 +1439,7 @@ export function createCommand(): cli.ICommand {
           releaseReactCommand.xcodeProjectFile = argv["xcodeProjectFile"] as any;
           releaseReactCommand.xcodeTargetName = argv["xcodeTargetName"] as any;
           releaseReactCommand.buildConfigurationName = argv["buildConfigurationName"] as any;
+          releaseReactCommand.json = argv["json"] as any;
         }
         break;
 

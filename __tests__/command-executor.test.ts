@@ -946,6 +946,99 @@ describe("command-executor", () => {
         expect.objectContaining({ description: "first release", rollout: 100 })
       );
     });
+
+    it("with --json emits the package JSON as the last stdout line and routes progress to stderr", async () => {
+      jest.spyOn(fs, "lstatSync").mockReturnValue({ isDirectory: () => false } as any);
+      mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+      const pkg = {
+        label: "v3",
+        packageHash: "abc123hash",
+        size: 4242,
+        appVersion: "1.0.0",
+        blobUrl: "https://cdn.example.com/blob/v3",
+        manifestBlobUrl: "https://cdn.example.com/manifest/v3",
+        description: "first release",
+        releasedBy: "adrian@aetherpush.com",
+        releaseMethod: "Upload",
+        uploadTime: 1714867200000,
+        rollout: 100,
+        isMandatory: false,
+        isDisabled: false,
+      };
+      mockSdkMethods.release.mockResolvedValue(pkg);
+
+      await executor.release({
+        type: cli.CommandType.release,
+        appName: "MyApp",
+        deploymentName: "Production",
+        package: "./bundle.js",
+        appStoreVersion: "1.0.0",
+        description: "first release",
+        disabled: false,
+        mandatory: false,
+        rollout: 100,
+        noDuplicateReleaseError: false,
+        json: true,
+      });
+
+      const stdoutMessages = consoleLogSpy.mock.calls.map((c) => String(c[0]));
+      const lastStdout = stdoutMessages[stdoutMessages.length - 1];
+      const parsed = JSON.parse(lastStdout);
+      expect(parsed).toEqual({
+        label: "v3",
+        packageHash: "abc123hash",
+        size: 4242,
+        appVersion: "1.0.0",
+        blobUrl: "https://cdn.example.com/blob/v3",
+        manifestBlobUrl: "https://cdn.example.com/manifest/v3",
+        description: "first release",
+        releasedBy: "adrian@aetherpush.com",
+        releaseMethod: "Upload",
+        uploadTime: 1714867200000,
+        rollout: 100,
+        isMandatory: false,
+        isDisabled: false,
+      });
+      expect(stdoutMessages.some((m) => m.includes("Uploading release package"))).toBe(false);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Uploading release package"));
+    });
+
+    it("without --json keeps progress on stdout and emits no JSON payload", async () => {
+      jest.spyOn(fs, "lstatSync").mockReturnValue({ isDirectory: () => false } as any);
+      mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+      mockSdkMethods.release.mockResolvedValue({
+        label: "v3",
+        packageHash: "h",
+        size: 1,
+        appVersion: "1.0.0",
+        blobUrl: "u",
+      } as any);
+
+      await executor.release({
+        type: cli.CommandType.release,
+        appName: "MyApp",
+        deploymentName: "Production",
+        package: "./bundle.js",
+        appStoreVersion: "1.0.0",
+        description: "first release",
+        disabled: false,
+        mandatory: false,
+        rollout: 100,
+        noDuplicateReleaseError: false,
+      });
+
+      const stdoutMessages = consoleLogSpy.mock.calls.map((c) => String(c[0]));
+      expect(stdoutMessages.some((m) => m.includes("Uploading release package"))).toBe(true);
+      const jsonLines = stdoutMessages.filter((m) => {
+        try {
+          JSON.parse(m);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(jsonLines.length).toBe(0);
+    });
   });
 
   describe("session / whoami", () => {
