@@ -40,6 +40,7 @@ import {
 import { getAndroidHermesEnabled, getiOSHermesEnabled, runHermesEmitBinaryCommand, isValidVersion } from "./react-native-utils";
 import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./utils/file-utils";
 import { enrichDescriptionWithCiMetadata } from "./utils/ci-metadata";
+import { formatReleaseJson } from "./utils/release-json";
 
 const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".aether", "config.json");
 const DEFAULT_AETHER_SERVER_URL = "https://api-staging.aetherpush.com";
@@ -71,6 +72,14 @@ export interface PackageWithMetrics {
 }
 
 export const log = (message: string | any): void => console.log(message);
+
+function progressLog(command: cli.IReleaseBaseCommand, message: string): void {
+  if (command.json) {
+    console.error(message);
+  } else {
+    log(message);
+  }
+}
 export let sdk: AccountManager;
 export const spawn = childProcess.spawn;
 export const execSync = childProcess.execSync;
@@ -1372,11 +1381,12 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
   return sdk
     .isAuthenticated(true)
     .then((isAuth: boolean) => {
-      log("Uploading release package...");
+      progressLog(command, "Uploading release package...");
       return sdk.release(command.appName, command.deploymentName, filePath, command.appStoreVersion, updateMetadata);
     })
-    .then((): void => {
-      log(
+    .then((pkg: Package): void => {
+      progressLog(
+        command,
         'Successfully released an update containing the "' +
           command.package +
           '" ' +
@@ -1387,6 +1397,9 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
           command.appName +
           '" app.'
       );
+      if (command.json) {
+        console.log(formatReleaseJson(pkg));
+      }
     })
     .catch((err: AetherError) => releaseErrorHandler(err, command));
 };
@@ -1486,7 +1499,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
           (platform === "ios" && (await getiOSHermesEnabled(command.podFile))); // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in Podfile and we're releasing an iOS build
 
         if (isHermesEnabled) {
-          log(chalk.cyan("\nRunning hermes compiler...\n"));
+          progressLog(command, chalk.cyan("\nRunning hermes compiler...\n"));
           await runHermesEmitBinaryCommand(
             bundleName,
             outputFolder,
@@ -1498,14 +1511,14 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
       })
       .then(async () => {
         if (command.privateKeyPath) {
-          log(chalk.cyan("\nSigning the bundle:\n"));
+          progressLog(command, chalk.cyan("\nSigning the bundle:\n"));
           await sign(command.privateKeyPath, outputFolder);
         } else {
-          console.log("private key was not provided");
+          progressLog(command, "private key was not provided");
         }
       })
       .then(() => {
-        log(chalk.cyan("\nReleasing update contents to Aether:\n"));
+        progressLog(command, chalk.cyan("\nReleasing update contents to Aether:\n"));
         return release(releaseCommand);
       })
       .then(() => {

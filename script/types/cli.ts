@@ -206,6 +206,7 @@ export interface IReleaseBaseCommand extends ICommand, IPackageInfo {
   deploymentName: string;
   noDuplicateReleaseError?: boolean;
   privateKeyPath?: string;
+  json?: boolean;
 }
 
 export interface IReleaseCommand extends IReleaseBaseCommand {

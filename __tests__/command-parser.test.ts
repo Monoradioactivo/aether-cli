@@ -898,4 +898,24 @@ describe("command-parser", () => {
       expect(cmd.ciMetadata).toBe(false);
     });
   });
+
+  describe("json output flag", () => {
+    it("leaves json undefined when --json is absent on release", () => {
+      const cmd = parseArgs(["release", "MyApp", "./bundle.js", "1.0.0"]);
+      expect(cmd.type).toBe(CommandType.release);
+      expect(cmd.json).toBeUndefined();
+    });
+
+    it("sets json true on release with --json", () => {
+      const cmd = parseArgs(["release", "MyApp", "./bundle.js", "1.0.0", "--json"]);
+      expect(cmd.type).toBe(CommandType.release);
+      expect(cmd.json).toBe(true);
+    });
+
+    it("sets json true on release-react with --json", () => {
+      const cmd = parseArgs(["release-react", "MyApp", "ios", "--json"]);
+      expect(cmd.type).toBe(CommandType.releaseReact);
+      expect(cmd.json).toBe(true);
+    });
+  });
 });
