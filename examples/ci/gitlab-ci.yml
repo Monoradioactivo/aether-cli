@@ -1,0 +1,86 @@
+stages:
+  - deploy
+
+variables:
+  AETHER_CLI_VERSION: "0.3.0"
+  AETHER_APP_NAME: "my-react-native-app"
+  AETHER_PLATFORM: "android"
+
+.aether_release:
+  stage: deploy
+  image: node:22
+  before_script:
+    - npm ci
+    - npm install -g "@aetherpush/cli@${AETHER_CLI_VERSION}"
+    - |
+      set -eu
+      INSTALLED=$(aether --version | tr -d ' \r\n')
+      if [ "$INSTALLED" != "$AETHER_CLI_VERSION" ]; then
+        echo "Installed Aether CLI '$INSTALLED' does not match pinned '$AETHER_CLI_VERSION'."
+        exit 1
+      fi
+    - |
+      set -eu
+      if [ -z "${AETHER_API_KEY:-}" ]; then
+        echo "AETHER_API_KEY is not set. Add it as a masked, protected CI/CD variable."
+        exit 1
+      fi
+      if [ -n "${AETHER_API_URL:-}" ]; then
+        aether login --accessKey "$AETHER_API_KEY" --serverUrl "$AETHER_API_URL"
+      else
+        aether login --accessKey "$AETHER_API_KEY"
+      fi
+  script:
+    - |
+      set -eu
+      aether release-react "$AETHER_APP_NAME" "$AETHER_PLATFORM" \
+        --deploymentName "$AETHER_DEPLOYMENT" \
+        --rollout "$AETHER_ROLLOUT" \
+        --json > release.json
+    - |
+      set -eu
+      node -e '
+        const fs = require("fs");
+        const r = JSON.parse(fs.readFileSync("release.json", "utf8"));
+        const fields = {
+          RELEASE_LABEL: r.label,
+          RELEASE_PACKAGE_HASH: r.packageHash,
+          RELEASE_SIZE: r.size,
+          RELEASE_APP_VERSION: r.appVersion,
+          RELEASE_METHOD: r.releaseMethod,
+          RELEASE_ROLLOUT: r.rollout,
+          RELEASE_IS_MANDATORY: r.isMandatory,
+          RELEASE_IS_DISABLED: r.isDisabled
+        };
+        const lines = Object.entries(fields)
+          .filter(([, v]) => v !== undefined && v !== null)
+          .map(([k, v]) => k + "=" + v);
+        fs.writeFileSync("release.env", lines.join("\n") + "\n");
+      '
+  artifacts:
+    paths:
+      - release.json
+    reports:
+      dotenv: release.env
+    expire_in: 1 week
+
+deploy_staging:
+  extends: .aether_release
+  variables:
+    AETHER_DEPLOYMENT: "Staging"
+    AETHER_ROLLOUT: "100%"
+  environment:
+    name: staging
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+deploy_production:
+  extends: .aether_release
+  variables:
+    AETHER_DEPLOYMENT: "Production"
+    AETHER_ROLLOUT: "25%"
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
