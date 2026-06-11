@@ -1,0 +1,73 @@
+def aetherRelease() {
+    sh '''
+        set -eu
+        npm ci
+        npm install -g "@aetherpush/cli@${AETHER_CLI_VERSION}"
+        INSTALLED=$(aether --version | tr -d ' \\r\\n')
+        if [ "$INSTALLED" != "$AETHER_CLI_VERSION" ]; then
+            echo "Installed Aether CLI '$INSTALLED' does not match pinned '$AETHER_CLI_VERSION'."
+            exit 1
+        fi
+        if [ -z "${AETHER_API_KEY:-}" ]; then
+            echo "AETHER_API_KEY is not set. Add it as a Secret Text credential."
+            exit 1
+        fi
+        if [ -n "${AETHER_API_URL:-}" ]; then
+            aether login --accessKey "$AETHER_API_KEY" --serverUrl "$AETHER_API_URL"
+        else
+            aether login --accessKey "$AETHER_API_KEY"
+        fi
+        aether release-react "$AETHER_APP_NAME" "$AETHER_PLATFORM" \\
+            --deploymentName "$AETHER_DEPLOYMENT" \\
+            --rollout "$AETHER_ROLLOUT" \\
+            --json > release.json
+    '''
+    archiveArtifacts artifacts: 'release.json', fingerprint: true
+}
+
+pipeline {
+    agent {
+        docker { image 'node:22' }
+    }
+    environment {
+        CI = 'true'
+        AETHER_CLI_VERSION = '0.3.0'
+        AETHER_APP_NAME = 'my-react-native-app'
+        AETHER_PLATFORM = 'android'
+        AETHER_API_KEY = credentials('aether-api-key')
+    }
+    stages {
+        stage('Deploy to Staging') {
+            when {
+                branch 'main'
+            }
+            environment {
+                AETHER_DEPLOYMENT = 'Staging'
+                AETHER_ROLLOUT = '100%'
+            }
+            steps {
+                script {
+                    aetherRelease()
+                }
+            }
+        }
+        stage('Deploy to Production') {
+            when {
+                branch 'main'
+            }
+            input {
+                message 'Deploy to Production?'
+                ok 'Deploy'
+            }
+            environment {
+                AETHER_DEPLOYMENT = 'Production'
+                AETHER_ROLLOUT = '25%'
+            }
+            steps {
+                script {
+                    aetherRelease()
+                }
+            }
+        }
+    }
+}
