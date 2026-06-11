@@ -1,0 +1,93 @@
+version: 2.1
+
+executors:
+  node:
+    docker:
+      - image: cimg/node:22.22
+
+jobs:
+  deploy:
+    executor: node
+    parameters:
+      deployment:
+        type: string
+      rollout:
+        type: string
+        default: "100%"
+      app-name:
+        type: string
+        default: "my-react-native-app"
+      platform:
+        type: string
+        default: "android"
+      cli-version:
+        type: string
+        default: "0.3.0"
+    steps:
+      - checkout
+      - run:
+          name: Install project dependencies
+          command: npm ci
+      - run:
+          name: Install Aether CLI
+          command: |
+            set -eu
+            npm install -g "@aetherpush/cli@<< parameters.cli-version >>"
+            INSTALLED=$(aether --version | tr -d ' \r\n')
+            if [ "$INSTALLED" != "<< parameters.cli-version >>" ]; then
+              echo "Installed Aether CLI '$INSTALLED' does not match pinned '<< parameters.cli-version >>'."
+              exit 1
+            fi
+      - run:
+          name: Log in to Aether
+          command: |
+            set -eu
+            if [ -z "${AETHER_API_KEY:-}" ]; then
+              echo "AETHER_API_KEY is not set. Add it to the CircleCI context used by this job."
+              exit 1
+            fi
+            if [ -n "${AETHER_API_URL:-}" ]; then
+              aether login --accessKey "$AETHER_API_KEY" --serverUrl "$AETHER_API_URL"
+            else
+              aether login --accessKey "$AETHER_API_KEY"
+            fi
+      - run:
+          name: Release React Native bundle
+          command: |
+            set -eu
+            aether release-react "<< parameters.app-name >>" "<< parameters.platform >>" \
+              --deploymentName "<< parameters.deployment >>" \
+              --rollout "<< parameters.rollout >>" \
+              --json > release.json
+      - store_artifacts:
+          path: release.json
+          destination: release.json
+
+workflows:
+  release:
+    jobs:
+      - deploy:
+          name: deploy-staging
+          context: aether-deploy
+          deployment: "Staging"
+          rollout: "100%"
+          filters:
+            branches:
+              only: main
+      - hold-production:
+          type: approval
+          requires:
+            - deploy-staging
+          filters:
+            branches:
+              only: main
+      - deploy:
+          name: deploy-production
+          context: aether-deploy
+          deployment: "Production"
+          rollout: "25%"
+          requires:
+            - hold-production
+          filters:
+            branches:
+              only: main
