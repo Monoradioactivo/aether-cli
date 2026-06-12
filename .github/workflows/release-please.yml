@@ -32,7 +32,6 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
           release-type: node
-          package-name: "@aetherpush/cli"
 
       - name: Keep release PR up to date with main
         if: steps.release.outputs.pr
