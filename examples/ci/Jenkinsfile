@@ -31,7 +31,7 @@ pipeline {
     }
     environment {
         CI = 'true'
-        AETHER_CLI_VERSION = '0.3.0'
+        AETHER_CLI_VERSION = '0.3.1'
         AETHER_APP_NAME = 'my-react-native-app'
         AETHER_PLATFORM = 'android'
         AETHER_API_KEY = credentials('aether-api-key')
