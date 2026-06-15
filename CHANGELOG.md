@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.0...v0.3.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **cli:** route release-react progress output to stderr in --json mode ([72b825f](https://github.com/Monoradioactivo/aether-cli/commit/72b825fa746d224f4a66d1a9dba9c662764d314a))
+
 ## [0.3.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.2.0...v0.3.0) (2026-05-29)
 
 
