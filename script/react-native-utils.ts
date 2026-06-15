@@ -16,7 +16,8 @@ export async function runHermesEmitBinaryCommand(
   outputFolder: string,
   sourcemapOutput: string,
   extraHermesFlags: string[],
-  gradleFile: string
+  gradleFile: string,
+  json: boolean = false
 ): Promise<void> {
   const hermesArgs: string[] = [];
   const envNodeArgs: string = process.env.CODE_PUSH_NODE_ARGS;
@@ -37,14 +38,22 @@ export async function runHermesEmitBinaryCommand(
     hermesArgs.push("-output-source-map");
   }
 
-  console.log(chalk.cyan("Converting JS bundle to byte code via Hermes, running command:\n"));
+  const progress = (message: string): void => {
+    if (json) {
+      console.error(message);
+    } else {
+      console.log(message);
+    }
+  };
+
+  progress(chalk.cyan("Converting JS bundle to byte code via Hermes, running command:\n"));
   const hermesCommand = await getHermesCommand(gradleFile);
   const hermesProcess = childProcess.spawn(hermesCommand, hermesArgs);
-  console.log(`${hermesCommand} ${hermesArgs.join(" ")}`);
+  progress(`${hermesCommand} ${hermesArgs.join(" ")}`);
 
   return new Promise<void>((resolve, reject) => {
     hermesProcess.stdout.on("data", (data: Buffer) => {
-      console.log(data.toString().trim());
+      progress(data.toString().trim());
     });
 
     hermesProcess.stderr.on("data", (data: Buffer) => {
@@ -98,10 +107,10 @@ export async function runHermesEmitBinaryCommand(
       // https://github.com/facebook/react-native/blob/master/scripts/react-native-xcode.sh#L178
       // packager.sourcemap.map + hbc.sourcemap.map = sourcemap.map
       const composeSourceMapsProcess = childProcess.spawn("node", composeSourceMapsArgs);
-      console.log(`${composeSourceMapsPath} ${composeSourceMapsArgs.join(" ")}`);
+      progress(`${composeSourceMapsPath} ${composeSourceMapsArgs.join(" ")}`);
 
       composeSourceMapsProcess.stdout.on("data", (data: Buffer) => {
-        console.log(data.toString().trim());
+        progress(data.toString().trim());
       });
 
       composeSourceMapsProcess.stderr.on("data", (data: Buffer) => {

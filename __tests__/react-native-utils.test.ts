@@ -382,5 +382,29 @@ describe("react-native-utils", () => {
         }
       }
     });
+
+    it("routes hermes progress to stderr and keeps stdout clean when json is true", async () => {
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture("0.70.0");
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "main.jsbundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile, true);
+      });
+
+      const stdout = logSpy.mock.calls.map((c) => String(c[0]));
+      const stderr = errSpy.mock.calls.map((c) => String(c[0]));
+      expect(stdout.some((m) => m.includes("Converting JS bundle to byte code"))).toBe(false);
+      expect(stderr.some((m) => m.includes("Converting JS bundle to byte code"))).toBe(true);
+    });
   });
 });
