@@ -2,7 +2,7 @@ stages:
   - deploy
 
 variables:
-  AETHER_CLI_VERSION: "0.3.1"
+  AETHER_CLI_VERSION: "0.3.2"
   AETHER_APP_NAME: "my-react-native-app"
   AETHER_PLATFORM: "android"
 
