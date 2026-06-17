@@ -558,6 +558,10 @@ export function execute(command: cli.ICommand) {
     switch (command.type) {
       // Must not be logged in
       case cli.CommandType.login:
+        if (connectionInfo && !command.nonInteractive) {
+          throw new Error("You are already logged in from this machine.");
+        }
+        break;
       case cli.CommandType.register:
         if (connectionInfo) {
           throw new Error("You are already logged in from this machine.");

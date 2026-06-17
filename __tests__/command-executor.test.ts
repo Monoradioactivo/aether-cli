@@ -1258,6 +1258,18 @@ describe("command-executor", () => {
       expect(mockSdkMethods.isAuthenticated).toHaveBeenCalled();
       expect(mockPromptGet).not.toHaveBeenCalled();
     });
+    it("login with accessKey in non-interactive mode overwrites an existing session", async () => {
+      readFileSyncSpy.mockReturnValueOnce(JSON.stringify({ accessKey: "existing-key" }));
+      mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+      await executor.execute({
+        type: cli.CommandType.login,
+        accessKey: "valid-raw-key",
+        serverUrl: null,
+        nonInteractive: true,
+      });
+      expect(mockSdkMethods.isAuthenticated).toHaveBeenCalled();
+      expect(mockPromptGet).not.toHaveBeenCalled();
+    });
 
     it("register fails loud in non-interactive mode", async () => {
       await expect(
