@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.1...v0.3.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* **cli:** make login idempotent in non-interactive mode ([6e0dae1](https://github.com/Monoradioactivo/aether-cli/commit/6e0dae13fd2b180c07e0640dcc5af77748485152))
+
 ## [0.3.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.0...v0.3.1) (2026-06-15)
 
 
