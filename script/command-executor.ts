@@ -558,6 +558,10 @@ export function execute(command: cli.ICommand) {
     switch (command.type) {
       // Must not be logged in
       case cli.CommandType.login:
+        if (connectionInfo && !command.nonInteractive) {
+          throw new Error("You are already logged in from this machine.");
+        }
+        break;
       case cli.CommandType.register:
         if (connectionInfo) {
           throw new Error("You are already logged in from this machine.");
@@ -966,7 +970,7 @@ function getPackageMetricsString(obj: Package): string {
 }
 
 function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, projectName: string): Promise<string> {
-  log(chalk.cyan(`Detecting ${command.platform} app version:\n`));
+  progressLog(command, chalk.cyan(`Detecting ${command.platform} app version:\n`));
 
   if (command.platform === "ios") {
     let resolvedPlistFile: string = command.plistFile;
@@ -1012,7 +1016,7 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
 
     if (parsedPlist && parsedPlist.CFBundleShortVersionString) {
       if (isValidVersion(parsedPlist.CFBundleShortVersionString)) {
-        log(`Using the target binary version value "${parsedPlist.CFBundleShortVersionString}" from "${resolvedPlistFile}".\n`);
+        progressLog(command, `Using the target binary version value "${parsedPlist.CFBundleShortVersionString}" from "${resolvedPlistFile}".\n`);
         return Promise.resolve(parsedPlist.CFBundleShortVersionString);
       } else {
         if (parsedPlist.CFBundleShortVersionString !== "$(MARKETING_VERSION)") {
@@ -1078,7 +1082,7 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
         if (isValidVersion(appVersion)) {
           // The versionName property is a valid semver string,
           // so we can safely use that and move on.
-          log(`Using the target binary version value "${appVersion}" from "${buildGradlePath}".\n`);
+          progressLog(command, `Using the target binary version value "${appVersion}" from "${buildGradlePath}".\n`);
           return appVersion;
         } else if (/^\d.*/.test(appVersion)) {
           // The versionName property isn't a valid semver string,
@@ -1170,7 +1174,7 @@ function getAppVersionFromXcodeProject(command: cli.IReleaseReactCommand, projec
       `The "MARKETING_VERSION" key in the "${resolvedPbxprojFile}" file needs to specify a valid semver string, containing both a major and minor version (e.g. 1.3.2, 1.1).`
     );
   }
-  console.log(`Using the target binary version value "${marketingVersion}" from "${resolvedPbxprojFile}".\n`);
+  progressLog(command, `Using the target binary version value "${marketingVersion}" from "${resolvedPbxprojFile}".\n`);
 
   return Promise.resolve(marketingVersion);
 }
@@ -1489,7 +1493,8 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
           entryFile,
           outputFolder,
           platform,
-          command.sourcemapOutput
+          command.sourcemapOutput,
+          command
         )
       )
       .then(async () => {
@@ -1505,7 +1510,8 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
             outputFolder,
             command.sourcemapOutput,
             command.extraHermesFlags,
-            command.gradleFile
+            command.gradleFile,
+            command.json
           );
         }
       })
@@ -1618,7 +1624,8 @@ export const runReactNativeBundleCommand = (
   entryFile: string,
   outputFolder: string,
   platform: string,
-  sourcemapOutput: string
+  sourcemapOutput: string,
+  command: cli.IReleaseReactCommand
 ): Promise<void> => {
   const reactNativeBundleArgs: string[] = [];
   const envNodeArgs: string = process.env.CODE_PUSH_NODE_ARGS;
@@ -1648,13 +1655,13 @@ export const runReactNativeBundleCommand = (
     reactNativeBundleArgs.push("--sourcemap-output", sourcemapOutput);
   }
 
-  log(chalk.cyan('Running "react-native bundle" command:\n'));
+  progressLog(command, chalk.cyan('Running "react-native bundle" command:\n'));
   const reactNativeBundleProcess = spawn("node", reactNativeBundleArgs);
-  log(`node ${reactNativeBundleArgs.join(" ")}`);
+  progressLog(command, `node ${reactNativeBundleArgs.join(" ")}`);
 
   return new Promise<void>((resolve, reject) => {
     reactNativeBundleProcess.stdout.on("data", (data: Buffer) => {
-      log(data.toString().trim());
+      progressLog(command, data.toString().trim());
     });
 
     reactNativeBundleProcess.stderr.on("data", (data: Buffer) => {

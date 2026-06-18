@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.1...v0.3.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* **cli:** make login idempotent in non-interactive mode ([6e0dae1](https://github.com/Monoradioactivo/aether-cli/commit/6e0dae13fd2b180c07e0640dcc5af77748485152))
+
+## [0.3.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.0...v0.3.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **cli:** route release-react progress output to stderr in --json mode ([72b825f](https://github.com/Monoradioactivo/aether-cli/commit/72b825fa746d224f4a66d1a9dba9c662764d314a))
+
 ## [0.3.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.2.0...v0.3.0) (2026-05-29)
 
 
