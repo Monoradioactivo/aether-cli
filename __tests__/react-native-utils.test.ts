@@ -33,11 +33,18 @@ function createFakeChildProcess(): any {
 function withCwd<T>(dir: string, fn: () => T): T {
   const originalCwd = process.cwd();
   process.chdir(dir);
+  let result: T;
   try {
-    return fn();
-  } finally {
+    result = fn();
+  } catch (err) {
     process.chdir(originalCwd);
+    throw err;
   }
+  if (result instanceof Promise) {
+    return result.finally(() => process.chdir(originalCwd)) as unknown as T;
+  }
+  process.chdir(originalCwd);
+  return result;
 }
 
 function hermesOsBin(): string {
@@ -65,7 +72,7 @@ describe("react-native-utils", () => {
   let errSpy: jest.SpyInstance;
 
   beforeAll(() => {
-    sandbox = path.join(os.tmpdir(), randomDirName());
+    sandbox = path.join(fs.realpathSync(os.tmpdir()), randomDirName());
     fs.mkdirSync(sandbox, { recursive: true });
   });
 
@@ -231,7 +238,11 @@ describe("react-native-utils", () => {
   });
 
   describe("runHermesEmitBinaryCommand", () => {
-    function buildProjectFixture(rnVersion: string): { projectDir: string; gradleFile: string; outputFolder: string } {
+    function buildProjectFixture(
+      rnVersion: string,
+      options: { includeBundledHermes?: boolean; includeHermesCompilerPackage?: boolean } = {}
+    ): { projectDir: string; gradleFile: string; outputFolder: string } {
+      const { includeBundledHermes = true, includeHermesCompilerPackage = false } = options;
       const projectDir = path.join(sandbox, "proj-" + crypto.randomBytes(4).toString("hex"));
 
       writeFile(
@@ -244,10 +255,19 @@ describe("react-native-utils", () => {
         JSON.stringify({ name: "react-native", version: rnVersion })
       );
 
-      writeFile(
-        path.join(projectDir, "node_modules", "react-native", "sdks", "hermesc", hermesOsBin(), hermesOsExe(rnVersion)),
-        "fake-hermes-bin"
-      );
+      if (includeBundledHermes) {
+        writeFile(
+          path.join(projectDir, "node_modules", "react-native", "sdks", "hermesc", hermesOsBin(), hermesOsExe(rnVersion)),
+          "fake-hermes-bin"
+        );
+      }
+
+      if (includeHermesCompilerPackage) {
+        writeFile(
+          path.join(projectDir, "node_modules", "hermes-compiler", "hermesc", hermesOsBin(), hermesOsExe(rnVersion)),
+          "fake-hermes-compiler-bin"
+        );
+      }
 
       writeFile(
         path.join(projectDir, "node_modules", "react-native", "scripts", "compose-source-maps.js"),
@@ -381,6 +401,104 @@ describe("react-native-utils", () => {
           process.env.CODE_PUSH_NODE_ARGS = originalEnv;
         }
       }
+    });
+
+    it("uses the hermes-compiler package binary when the bundled react-native location is absent", async () => {
+      const rnVersion = "0.86.0";
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture(rnVersion, {
+        includeBundledHermes: false,
+        includeHermesCompilerPackage: true,
+      });
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "main.jsbundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+      });
+
+      expect(mockedSpawn.mock.calls[0][0]).toBe(
+        path.join(projectDir, "node_modules", "hermes-compiler", "hermesc", hermesOsBin(), hermesOsExe(rnVersion))
+      );
+    });
+
+    it("prefers the hermes-compiler package binary over the bundled react-native location", async () => {
+      const rnVersion = "0.86.0";
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture(rnVersion, {
+        includeBundledHermes: true,
+        includeHermesCompilerPackage: true,
+      });
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "main.jsbundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+      });
+
+      expect(mockedSpawn.mock.calls[0][0]).toBe(
+        path.join(projectDir, "node_modules", "hermes-compiler", "hermesc", hermesOsBin(), hermesOsExe(rnVersion))
+      );
+    });
+
+    it("uses the bundled react-native binary when the hermes-compiler package is absent", async () => {
+      const rnVersion = "0.70.0";
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture(rnVersion);
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "main.jsbundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+      });
+
+      expect(mockedSpawn.mock.calls[0][0]).toBe(
+        path.join(projectDir, "node_modules", "react-native", "sdks", "hermesc", hermesOsBin(), hermesOsExe(rnVersion))
+      );
+    });
+
+    it("rejects with the attempted locations when no hermes compiler is found", async () => {
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture("0.86.0", {
+        includeBundledHermes: false,
+        includeHermesCompilerPackage: false,
+      });
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "main.jsbundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+
+      await withCwd(projectDir, async () => {
+        const pendingRun = rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+        await expect(pendingRun).rejects.toThrow(/Unable to find the Hermes compiler/);
+        await expect(pendingRun).rejects.toThrow(/hermes-compiler/);
+        await expect(pendingRun).rejects.toThrow(/sdks/);
+      });
+
+      expect(mockedSpawn).not.toHaveBeenCalled();
     });
 
     it("routes hermes progress to stderr and keeps stdout clean when json is true", async () => {

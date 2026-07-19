@@ -228,7 +228,13 @@ async function getHermesCommand(gradleFile: string): Promise<string> {
       return false;
     }
   };
-  // Hermes is bundled with react-native since 0.69
+  // react-native 0.84+ ships the Hermes compiler in the standalone hermes-compiler package
+  const standaloneHermesCompiler = path.join(process.cwd(), "node_modules", "hermes-compiler", "hermesc", getHermesOSBin(), getHermesOSExe());
+  if (fileExists(standaloneHermesCompiler)) {
+    return standaloneHermesCompiler;
+  }
+
+  // Hermes was bundled with react-native from 0.69 up to 0.83
   const bundledHermesEngine = path.join(getReactNativePackagePath(), "sdks", "hermesc", getHermesOSBin(), getHermesOSExe());
   if (fileExists(bundledHermesEngine)) {
     return bundledHermesEngine;
@@ -237,14 +243,23 @@ async function getHermesCommand(gradleFile: string): Promise<string> {
   const gradleHermesCommand = await getHermesCommandFromGradle(gradleFile);
   if (gradleHermesCommand) {
     return path.join("android", "app", gradleHermesCommand.replace("%OS-BIN%", getHermesOSBin()));
-  } else {
-    // assume if hermes-engine exists it should be used instead of hermesvm
-    const hermesEngine = path.join("node_modules", "hermes-engine", getHermesOSBin(), getHermesOSExe());
-    if (fileExists(hermesEngine)) {
-      return hermesEngine;
-    }
-    return path.join("node_modules", "hermesvm", getHermesOSBin(), "hermes");
   }
+
+  // assume if hermes-engine exists it should be used instead of hermesvm
+  const hermesEngine = path.join(process.cwd(), "node_modules", "hermes-engine", getHermesOSBin(), getHermesOSExe());
+  if (fileExists(hermesEngine)) {
+    return hermesEngine;
+  }
+
+  const hermesvm = path.join(process.cwd(), "node_modules", "hermesvm", getHermesOSBin(), "hermes");
+  if (fileExists(hermesvm)) {
+    return hermesvm;
+  }
+
+  throw new Error(
+    "Unable to find the Hermes compiler. Tried the following locations:\n" +
+      [standaloneHermesCompiler, bundledHermesEngine, hermesEngine, hermesvm].map((location) => `  ${location}`).join("\n")
+  );
 }
 
 function getComposeSourceMapsPath(): string {
