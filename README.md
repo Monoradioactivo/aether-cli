@@ -78,6 +78,19 @@ aether rollback my-react-native-app Production
 
 Full reference and flags: `aether <command> --help`.
 
+## Hermes
+
+`release-react` compiles the bundle to Hermes bytecode when the project has Hermes enabled, or when you pass `-h` / `--useHermes`. For that step the CLI runs the `hermesc` compiler from the project's own `node_modules`, checking these locations in order and using the first one that exists:
+
+1. `node_modules/hermes-compiler` (React Native 0.84 and newer)
+2. `node_modules/react-native/sdks/hermesc` (React Native 0.69 to 0.83)
+3. the `hermesCommand` path from `android/app/build.gradle`, if set
+4. `node_modules/hermes-engine` or `node_modules/hermesvm` (older projects)
+
+If no compiler is found, the command fails and prints the paths it tried.
+
+Known limitation: on Windows, some versions of the `hermes-compiler` package ship without a `win64-bin` binary. If a Hermes release fails on Windows with that path list, run it from macOS or Linux (for example in CI) instead.
+
 ## Configuration
 
 Session and server config are stored in `~/.aether/config.json`. Created on `aether login`, deleted on `aether logout`.
