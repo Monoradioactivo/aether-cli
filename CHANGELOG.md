@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.2...v0.3.3) (2026-07-19)
+
+
+### Bug Fixes
+
+* **cli:** resolve hermesc from the hermes-compiler package on RN 0.84+ ([#72](https://github.com/Monoradioactivo/aether-cli/issues/72)) ([691cf1c](https://github.com/Monoradioactivo/aether-cli/commit/691cf1ca81cc47ed2136a7b5f6830dc73d818d04))
+
 ## [0.3.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.1...v0.3.2) (2026-06-17)
 
 
