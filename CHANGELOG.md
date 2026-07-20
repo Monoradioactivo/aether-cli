@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.4...v0.4.0) (2026-07-20)
+
+
+### Features
+
+* **cli:** sign releases from the release command ([#78](https://github.com/Monoradioactivo/aether-cli/issues/78)) ([fd98087](https://github.com/Monoradioactivo/aether-cli/commit/fd98087098b435485f4be8f812524b8b6eb12a16))
+
 ## [0.3.4](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.3...v0.3.4) (2026-07-20)
 
 
