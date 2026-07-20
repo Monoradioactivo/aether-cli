@@ -1360,6 +1360,21 @@ function patch(command: cli.IPatchCommand): Promise<void> {
   throw new Error("At least one property must be specified to patch a release.");
 }
 
+export function throwForInvalidSignedReleaseFolder(updateContentsPath: string, isSingleFilePackage: boolean): void {
+  if (isSingleFilePackage) {
+    throw new Error(
+      'Code signing requires releasing a directory. Place the update contents in a folder named "CodePush" and release that folder.'
+    );
+  }
+
+  const folderName: string = path.basename(path.resolve(updateContentsPath));
+  if (folderName !== "CodePush") {
+    throw new Error(
+      `The SDK verifies signed updates against a top-level folder named "CodePush", but the release folder is named "${folderName}". Rename it to "CodePush" and release again.`
+    );
+  }
+}
+
 export const release = (command: cli.IReleaseCommand): Promise<void> => {
   if (isBinaryOrZip(command.package)) {
     throw new Error(
@@ -1384,7 +1399,13 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
 
   return sdk
     .isAuthenticated(true)
-    .then((isAuth: boolean) => {
+    .then(async (isAuth: boolean) => {
+      if (command.privateKeyPath) {
+        throwForInvalidSignedReleaseFolder(filePath, isSingleFilePackage);
+        progressLog(command, chalk.cyan("\nSigning the release contents:\n"));
+        await sign(command.privateKeyPath, filePath);
+      }
+
       progressLog(command, "Uploading release package...");
       return sdk.release(command.appName, command.deploymentName, filePath, command.appStoreVersion, updateMetadata);
     })
@@ -1411,7 +1432,7 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
 export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> => {
   let bundleName: string = command.bundleName;
   let entryFile: string = command.entryFile;
-  const outputFolder: string = command.outputDir || path.join(os.tmpdir(), "Aether");
+  const outputFolder: string = command.outputDir || path.join(os.tmpdir(), "CodePush");
   const platform: string = (command.platform = command.platform.toLowerCase());
   const releaseCommand: cli.IReleaseCommand = <any>command;
   // Check for app and deployment exist before releasing an update.
@@ -1517,6 +1538,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
       })
       .then(async () => {
         if (command.privateKeyPath) {
+          throwForInvalidSignedReleaseFolder(outputFolder, false);
           progressLog(command, chalk.cyan("\nSigning the bundle:\n"));
           await sign(command.privateKeyPath, outputFolder);
         } else {

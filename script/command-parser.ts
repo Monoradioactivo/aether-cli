@@ -790,6 +790,13 @@ yargs
           "When this flag is set, releasing a package that is identical to the latest release will produce a warning instead of an error",
         type: "boolean",
       })
+      .option("privateKeyPath", {
+        alias: "k",
+        default: null,
+        demand: false,
+        description: "Path to the private key used for code signing. The update contents must be a directory named CodePush.",
+        type: "string",
+      })
       .option("rollout", {
         alias: "r",
         default: "100%",
@@ -1403,6 +1410,7 @@ export function createCommand(): cli.ICommand {
           releaseCommand.disabled = argv["disabled"] as any;
           releaseCommand.mandatory = argv["mandatory"] as any;
           releaseCommand.noDuplicateReleaseError = argv["noDuplicateReleaseError"] as any;
+          releaseCommand.privateKeyPath = argv["privateKeyPath"] as any;
           releaseCommand.rollout = getRolloutValue(argv["rollout"] as any);
           releaseCommand.json = argv["json"] as any;
         }

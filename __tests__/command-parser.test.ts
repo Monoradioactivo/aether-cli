@@ -589,11 +589,17 @@ describe("command-parser", () => {
       expect(cmd.noDuplicateReleaseError).toBe(false);
       expect(cmd.rollout).toBe(100);
       expect(cmd.description).toBe("");
+      expect(cmd.privateKeyPath).toBe(null);
     });
 
     it("'release' with -d Production overrides the deployment", () => {
       const cmd = parseArgs(["release", "MyApp", "./bundle.js", "1.0.0", "-d", "Production"]);
       expect(cmd.deploymentName).toBe("Production");
+    });
+
+    it("'release' with -k parses the signing key path", () => {
+      const cmd = parseArgs(["release", "MyApp", "./CodePush", "1.0.0", "-k", "keys/private.pem"]);
+      expect(cmd.privateKeyPath).toBe("keys/private.pem");
     });
 
     it("'release' with --rollout 20 and full flags", () => {
