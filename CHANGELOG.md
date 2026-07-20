@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.3...v0.3.4) (2026-07-20)
+
+
+### Bug Fixes
+
+* **cli:** default to the production server URL ([#75](https://github.com/Monoradioactivo/aether-cli/issues/75)) ([2ea3737](https://github.com/Monoradioactivo/aether-cli/commit/2ea37372cf93cd62bbfdaa10a3afdd4be32d1a8d))
+
 ## [0.3.3](https://github.com/Monoradioactivo/aether-cli/compare/v0.3.2...v0.3.3) (2026-07-19)
 
 
