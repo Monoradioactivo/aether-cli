@@ -43,7 +43,7 @@ import { enrichDescriptionWithCiMetadata } from "./utils/ci-metadata";
 import { formatReleaseJson } from "./utils/release-json";
 
 const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".aether", "config.json");
-const DEFAULT_AETHER_SERVER_URL = "https://api-staging.aetherpush.com";
+const DEFAULT_AETHER_SERVER_URL = "https://api.aetherpush.com";
 const emailValidator = require("email-validator");
 const packageJson = require("../../package.json");
 const properties = require("properties");
