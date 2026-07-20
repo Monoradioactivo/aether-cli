@@ -908,6 +908,18 @@ describe("command-executor", () => {
       ).toThrow(/unnecessary to package releases in a \.zip/);
     });
 
+    it("signing a single-file package fails with folder guidance", () => {
+      expect(() => executorMod.throwForInvalidSignedReleaseFolder("./bundle.js", true)).toThrow(/folder named "CodePush"/);
+    });
+
+    it("signing a folder not named CodePush fails", () => {
+      expect(() => executorMod.throwForInvalidSignedReleaseFolder("./build/Aether", false)).toThrow(/named "Aether"/);
+    });
+
+    it("signing a folder named CodePush passes the guard", () => {
+      expect(() => executorMod.throwForInvalidSignedReleaseFolder("./build/CodePush", false)).not.toThrow();
+    });
+
     it("rejects an invalid semver range", () => {
       jest.spyOn(fs, "lstatSync").mockReturnValue({ isDirectory: () => false } as any);
       expect(() =>
