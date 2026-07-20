@@ -1,6 +1,6 @@
 {
   "name": "@aetherpush/cli",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "Command-line interface for Aether — over-the-air updates for React Native apps.",
   "main": "./bin/script/index.js",
   "types": "./bin/script/index.d.ts",
