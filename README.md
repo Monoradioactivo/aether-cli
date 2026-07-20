@@ -1,26 +1,18 @@
 # Aether CLI
 
-> **Push React Native updates without the App Store.**
-
-The command-line interface for [Aether](https://aetherpush.com) — over-the-air JavaScript bundle updates for React Native apps.
+The command-line interface for [Aether](https://aetherpush.com), over-the-air JavaScript bundle updates for React Native apps.
 
 [![npm version](https://img.shields.io/npm/v/@aetherpush/cli.svg)](https://www.npmjs.com/package/@aetherpush/cli)
 [![license](https://img.shields.io/npm/l/@aetherpush/cli.svg)](./LICENSE)
 [![node](https://img.shields.io/node/v/@aetherpush/cli.svg)](https://nodejs.org)
 
-> ⚠️ **Pre-release.** Aether is in active development. APIs and behavior may change before the first stable release.
-
----
+The CLI follows semver and is on a 0.x line: a minor release may still change flags or output. Pin the exact version in CI and read the changelog before upgrading.
 
 ## Why Aether
 
-Microsoft retired App Center CodePush in March 2025, leaving thousands of React Native apps without an OTA update solution. Aether is a drop-in successor: same workflow, same client SDK contract, run by a small team focused on shipping.
+Microsoft retired App Center CodePush in March 2025. Aether is a drop-in successor: the same release workflow, the same client contract, and a maintained SDK ([`@aetherpush/react-native-code-push`](https://www.npmjs.com/package/@aetherpush/react-native-code-push)) that replaces `react-native-code-push` without code changes. You release to named channels (Staging and Production by default), roll out to a percentage of devices, and roll back when a release goes wrong. Apps can be shared with collaborators.
 
-- **App Store-free deployments** — push bug fixes and updates directly to installed apps
-- **Compatible with `react-native-code-push`** today; first-party Aether SDK ships next
-- **Channel-based releases** — Staging, Production, Beta, whatever you need
-- **Rollouts and rollbacks** — percentage-based rollouts, instant rollback to any previous label
-- **Multi-collaborator** — own your apps, share access with your team
+Full documentation lives at [docs.aetherpush.com](https://docs.aetherpush.com).
 
 ## Install
 
@@ -32,31 +24,33 @@ Requires Node.js 22 or later.
 
 ## Quick start
 
-```sh
-# Create an account (interactive: prompts for email, name, password)
-aether register
+1. Create an account and log in. `register` asks for your email, name, and password, then sends a verification email; click the link before logging in.
 
-# Verify your email by clicking the link sent to you, then log in
-aether login
+   ```sh
+   aether register
+   aether login
+   ```
 
-# Create your first app (auto-provisions Staging and Production deployments)
-aether app add my-react-native-app
+2. Create an app. This also creates its Staging and Production deployments. Print the deployment keys and wire one into your app binary.
 
-# Inspect the deployment keys to wire into your app binary
-aether deployment ls my-react-native-app -k
+   ```sh
+   aether app add my-react-native-app
+   aether deployment ls my-react-native-app -k
+   ```
 
-# Release an update (auto-detects entry file and target binary version)
-aether release-react my-react-native-app ios
+3. Release an update. The command bundles the app and reads the target binary version from the project.
 
-# Roll out to 25% of users
-aether patch my-react-native-app Staging -r 25
+   ```sh
+   aether release-react my-react-native-app ios
+   ```
 
-# Promote a release from Staging to Production
-aether promote my-react-native-app Staging Production
+4. Manage the release: widen a rollout, promote it, or roll it back.
 
-# Roll back if something goes wrong
-aether rollback my-react-native-app Production
-```
+   ```sh
+   aether patch my-react-native-app Staging -r 25
+   aether promote my-react-native-app Staging Production
+   aether rollback my-react-native-app Production
+   ```
 
 ## Commands
 
@@ -73,10 +67,11 @@ aether rollback my-react-native-app Production
 | `rollback` | Roll a deployment back to a previous release |
 | `collaborator add\|ls\|rm` | Manage app collaborators |
 | `access-key add\|ls\|patch\|rm` | Manage session-style CLI keys |
+| `api-key add\|ls\|patch\|rm` | Manage scoped API keys for CI/CD |
 | `session ls\|rm` | Manage active login sessions |
 | `debug ios\|android` | Stream Aether logs from a running app |
 
-Full reference and flags: `aether <command> --help`.
+Full reference and flags: `aether <command> --help`, or the [CLI reference](https://docs.aetherpush.com/cli/) in the docs.
 
 ## Hermes
 
@@ -104,20 +99,21 @@ aether login --serverUrl http://localhost:3000
 To run non-interactively (CI/CD):
 
 ```sh
-aether login --accessKey <your-access-key> --serverUrl https://api.aetherpush.com
+aether login --accessKey <your-api-key>
 ```
 
 ## CI/CD
 
-Dedicated GitHub Action, GitLab CI / CircleCI / Jenkins templates, and a CLI `--ci` auto-detect flag are coming in the next release. For now, use `aether login --accessKey` with a long-lived access key.
+The CLI detects CI environments through the `CI` variable and runs non-interactively there; `--ci` forces it. Ready-made pipeline templates for GitLab CI, CircleCI, and Jenkins live in [`examples/ci/`](./examples/ci/), and GitHub Actions has a dedicated action, [`aetherpush-deploy-action`](https://github.com/Monoradioactivo/aetherpush-deploy-action). The [CI/CD guides](https://docs.aetherpush.com/ci-cd/) walk through each platform.
 
 ## Migrating from CodePush
 
-If you're coming from `appcenter-cli` and `react-native-code-push`, a migration tool and step-by-step guide are on the way. Until then, your existing `react-native-code-push` SDK works against Aether servers unchanged — just swap your deployment key for one issued by `aether deployment ls -k`.
+The [migration guide](https://docs.aetherpush.com/migration/codepush/) covers both routes. In short: the Aether SDK is a drop-in replacement for `react-native-code-push` on React Native 0.76 and newer, and older apps can keep Microsoft's SDK pointed at Aether's CodePush-compatible endpoints. Existing deployment keys can be preserved with `aether deployment add -k`, so shipped binaries keep updating.
 
 ## Links
 
 - Website: [aetherpush.com](https://aetherpush.com)
+- Documentation: [docs.aetherpush.com](https://docs.aetherpush.com)
 - Issues: [GitHub](https://github.com/Monoradioactivo/aether-cli/issues)
 
 ## License
