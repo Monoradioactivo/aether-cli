@@ -1,0 +1,28 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabledManagers": ["custom.regex"],
+  "branchPrefix": "chore/renovate-",
+  "semanticCommits": "enabled",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["^examples/ci/(gitlab-ci\\.yml|Jenkinsfile|circleci-config\\.yml)$"],
+      "matchStrings": [
+        "AETHER_CLI_VERSION: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "AETHER_CLI_VERSION = '(?<currentValue>\\d+\\.\\d+\\.\\d+)'",
+        "default: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "@aetherpush/cli",
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["custom.regex"],
+      "semanticCommitType": "docs",
+      "semanticCommitScope": "ci",
+      "automerge": true,
+      "automergeStrategy": "squash"
+    }
+  ]
+}
