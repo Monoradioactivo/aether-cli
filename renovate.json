@@ -1,12 +1,18 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "enabledManagers": ["custom.regex"],
+  "enabledManagers": [
+    "custom.regex",
+    "npm",
+    "github-actions"
+  ],
   "branchPrefix": "chore/renovate-",
   "semanticCommits": "enabled",
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["^examples/ci/(gitlab-ci\\.yml|Jenkinsfile|circleci-config\\.yml)$"],
+      "fileMatch": [
+        "^examples/ci/(gitlab-ci\\.yml|Jenkinsfile|circleci-config\\.yml)$"
+      ],
       "matchStrings": [
         "AETHER_CLI_VERSION: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
         "AETHER_CLI_VERSION = '(?<currentValue>\\d+\\.\\d+\\.\\d+)'",
@@ -18,11 +24,57 @@
   ],
   "packageRules": [
     {
-      "matchManagers": ["custom.regex"],
+      "matchManagers": [
+        "custom.regex"
+      ],
       "semanticCommitType": "docs",
       "semanticCommitScope": "ci",
       "automerge": true,
       "automergeStrategy": "squash"
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "semanticCommitType": "chore"
+    },
+    {
+      "matchManagers": [
+        "npm",
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "dev dependencies (non-major)"
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "github actions (non-major)"
     }
-  ]
+  ],
+  "timezone": "America/Mexico_City",
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "minimumReleaseAge": "3 days",
+  "prConcurrentLimit": 3,
+  "osvVulnerabilityAlerts": true,
+  "dependencyDashboard": true
 }
