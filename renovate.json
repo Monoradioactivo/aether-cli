@@ -49,24 +49,17 @@
       "dependencyDashboardApproval": true
     },
     {
-      "matchDepTypes": [
-        "devDependencies"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
-      "groupName": "dev dependencies (non-major)"
-    },
-    {
       "matchManagers": [
+        "npm",
         "github-actions"
       ],
       "matchUpdateTypes": [
         "minor",
-        "patch"
+        "patch",
+        "pin",
+        "digest"
       ],
-      "groupName": "github actions (non-major)"
+      "groupName": "weekly updates"
     }
   ],
   "timezone": "America/Mexico_City",
