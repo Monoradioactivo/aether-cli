@@ -713,6 +713,23 @@ describe("command-executor", () => {
       expect(writeFileSyncSpy).toHaveBeenCalled();
     });
 
+    it("login via prompt explains the access-key path for MFA accounts", async () => {
+      setLoginCredentials("user@example.com", "password123secret");
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ mfaRequired: true, pendingToken: "pt", expires: 123, methods: ["passkey"] }),
+          { status: 200 }
+        )
+      );
+      await expect(
+        executor.execute({
+          type: cli.CommandType.login,
+          accessKey: null,
+          serverUrl: "https://api.aetherpush.com",
+        })
+      ).rejects.toThrow(/multi-factor authentication.*--accessKey/s);
+    });
+
     it("login via prompt surfaces server error message", async () => {
       setLoginCredentials("user@example.com", "wrong");
       fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }));

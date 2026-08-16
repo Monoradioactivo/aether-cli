@@ -741,6 +741,13 @@ async function login(command: cli.ILoginCommand): Promise<void> {
     throw new Error(body.error || body.message || `Login failed (HTTP ${res.status}).`);
   }
 
+  if (body.mfaRequired) {
+    throw new Error(
+      "This account has multi-factor authentication enabled, which the CLI cannot complete. " +
+        "Create an access key in the dashboard (Account > Access Keys) and log in with: aether login --accessKey <key>"
+    );
+  }
+
   const accessKey: string = body.accessKey;
   if (!accessKey) {
     throw new Error("Server returned an empty access key.");
