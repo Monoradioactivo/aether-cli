@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.4.1...v0.4.2) (2026-08-16)
+
+
+### Bug Fixes
+
+* **auth:** explain the access-key login path for MFA accounts ([#93](https://github.com/Monoradioactivo/aether-cli/issues/93)) ([f7c2d5f](https://github.com/Monoradioactivo/aether-cli/commit/f7c2d5f3ac0ef5bb5392b7dcc0636c79facc0bcd))
+
 ## [0.4.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.4.0...v0.4.1) (2026-07-26)
 
 
