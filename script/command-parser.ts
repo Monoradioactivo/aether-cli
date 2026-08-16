@@ -562,14 +562,27 @@ yargs
     yargs
       .usage(USAGE_PREFIX + " login [options]")
       .demand(/*count*/ 0, /*max*/ 0)
-      .example("login", "Prompts for email and password to log in")
+      .example("login", "Opens your browser to authorize this machine")
+      .example("login --device", "Prints a code to enter in a browser elsewhere (SSH, headless)")
       .example("login --accessKey mykey", 'Logs in non-interactively using access key "mykey" (for CI/CD)')
       .option("accessKey", {
         alias: "key",
         default: null,
         demand: false,
-        description: "Access key to authenticate non-interactively, instead of email and password",
+        description: "Access key to authenticate non-interactively, instead of opening a browser",
         type: "string",
+      })
+      .option("device", {
+        default: false,
+        demand: false,
+        description: "Authorize with a printed code instead of a local browser callback",
+        type: "boolean",
+      })
+      .option("password", {
+        default: false,
+        demand: false,
+        description: "Deprecated. Sign in with email and password; fails on accounts with MFA",
+        type: "boolean",
       })
       .option("serverUrl", {
         default: null,
@@ -1345,6 +1358,8 @@ export function createCommand(): cli.ICommand {
 
         loginCommand.serverUrl = getServerUrl(argv["serverUrl"] as any);
         loginCommand.accessKey = argv["accessKey"] as any;
+        loginCommand.device = argv["device"] as any;
+        loginCommand.password = argv["password"] as any;
         break;
 
       case "logout":

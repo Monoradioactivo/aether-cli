@@ -171,6 +171,8 @@ export interface IDeploymentRenameCommand extends ICommand {
 export interface ILoginCommand extends ICommand {
   serverUrl?: string;
   accessKey: string;
+  device?: boolean;
+  password?: boolean;
 }
 
 export interface IPackageInfo {

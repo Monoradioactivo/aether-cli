@@ -24,7 +24,7 @@ Requires Node.js 22 or later.
 
 ## Quick start
 
-1. Create an account and log in. `register` asks for your email, name, and password, then sends a verification email; click the link before logging in.
+1. Create an account and sign in. `register` asks for your email, name, and password, then sends a verification email; click the link before signing in. `login` opens your browser, where you finish signing in — including any second factor — and authorize this machine.
 
    ```sh
    aether register
@@ -86,20 +86,36 @@ If no compiler is found, the command fails and prints the paths it tried.
 
 Known limitation: on Windows, some versions of the `hermes-compiler` package ship without a `win64-bin` binary. If a Hermes release fails on Windows with that path list, run it from macOS or Linux (for example in CI) instead.
 
+## Signing in
+
+`aether login` opens your browser, you approve the device there, and the CLI receives its own credential. The browser handles passwords, passkeys, authenticator codes and recovery codes, so the terminal never needs to.
+
+On a machine with no browser — over SSH, in a container, on a locked-down host — ask for a code instead. The CLI prints a short code and a URL to open anywhere else:
+
+```sh
+aether login --device
+```
+
+The CLI falls back to this automatically when it cannot open a browser or bind a local callback port.
+
+For CI and other machines, keep passing a key:
+
+```sh
+aether login --accessKey <your-api-key>
+```
+
+`aether logout` revokes the device on the server and then clears the local credential. If the server cannot be reached, the local credential is cleared anyway and the device can still be revoked from the dashboard under Account > CLI & Devices.
+
+`--password` still signs in with email and password, but it is deprecated and cannot complete sign-in on accounts with multi-factor authentication.
+
 ## Configuration
 
-Session and server config are stored in `~/.aether/config.json`. Created on `aether login`, deleted on `aether logout`.
+The credential lives in `~/.aether/credentials.json`, readable only by you. Everything else — server URL, device id, account email — is in `~/.aether/cli.json`. Both are created on `aether login`; the credential file is deleted on `aether logout`. A `~/.aether/config.json` left by an earlier version is migrated automatically the first time you run this one.
 
 To target a non-default server (e.g. local development):
 
 ```sh
 aether login --serverUrl http://localhost:3000
-```
-
-To run non-interactively (CI/CD):
-
-```sh
-aether login --accessKey <your-api-key>
 ```
 
 ## CI/CD

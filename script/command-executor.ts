@@ -41,8 +41,10 @@ import { getAndroidHermesEnabled, getiOSHermesEnabled, runHermesEmitBinaryComman
 import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./utils/file-utils";
 import { enrichDescriptionWithCiMetadata } from "./utils/ci-metadata";
 import { formatReleaseJson } from "./utils/release-json";
+import * as keyStore from "./auth/key-store";
+import { generateDeviceId } from "./auth/pkce";
+import { runBrowserLogin } from "./auth/browser-login";
 
-const configFilePath: string = path.join(process.env.LOCALAPPDATA || process.env.HOME, ".aether", "config.json");
 const DEFAULT_AETHER_SERVER_URL = "https://api.aetherpush.com";
 const emailValidator = require("email-validator");
 const packageJson = require("../../package.json");
@@ -52,15 +54,12 @@ const CLI_HEADERS: Record<string, string> = {
   "X-Aether-CLI-Version": packageJson.version,
 };
 
-/** Deprecated */
-interface ILegacyLoginConnectionInfo {
-  accessKeyName: string;
-}
-
 interface ILoginConnectionInfo {
   accessKey: string;
   customServerUrl?: string; // A custom serverUrl for internal debugging purposes
   preserveAccessKeyOnLogout?: boolean;
+  credentialId?: string;
+  accountEmail?: string;
 }
 
 export interface UpdateMetricsWithTotalActive extends UpdateMetrics {
@@ -378,12 +377,16 @@ function removeCollaborator(command: cli.ICollaboratorRemoveCommand): Promise<vo
 
 function deleteConnectionInfoCache(printMessage: boolean = true): void {
   try {
-    fs.unlinkSync(configFilePath);
+    keyStore.clearCredential();
 
     if (printMessage) {
-      log(`Logged out. The session file at ${chalk.cyan(configFilePath)} has been deleted.`);
+      log(`Logged out. The credentials at ${chalk.cyan(keyStore.getCredentialPath())} have been deleted.`);
     }
-  } catch (ex) {}
+  } catch (ex: any) {
+    if (printMessage) {
+      log(chalk.yellow(ex?.message || `Could not delete ${keyStore.getCredentialPath()}.`));
+    }
+  }
 }
 
 function deleteFolder(folderPath: string): Promise<void> {
@@ -520,25 +523,25 @@ function deploymentHistory(command: cli.IDeploymentHistoryCommand): Promise<void
 }
 
 function deserializeConnectionInfo(): ILoginConnectionInfo {
+  let stored: keyStore.StoredCredential | null;
   try {
-    const savedConnection: string = fs.readFileSync(configFilePath, {
-      encoding: "utf8",
-    });
-    let connectionInfo: ILegacyLoginConnectionInfo | ILoginConnectionInfo = JSON.parse(savedConnection);
-
-    // If the connection info is in the legacy format, convert it to the modern format
-    if ((<ILegacyLoginConnectionInfo>connectionInfo).accessKeyName) {
-      connectionInfo = <ILoginConnectionInfo>{
-        accessKey: (<ILegacyLoginConnectionInfo>connectionInfo).accessKeyName,
-      };
-    }
-
-    const connInfo = <ILoginConnectionInfo>connectionInfo;
-
-    return connInfo;
-  } catch (ex) {
+    stored = keyStore.readCredential();
+  } catch {
+    // A home directory we cannot read is "not logged in", not a crash on every
+    // command.
     return;
   }
+  if (!stored) {
+    return;
+  }
+
+  return {
+    accessKey: stored.accessKey,
+    customServerUrl: stored.serverUrl,
+    preserveAccessKeyOnLogout: stored.preserveAccessKeyOnLogout,
+    credentialId: stored.credentialId,
+    accountEmail: stored.accountEmail,
+  };
 }
 
 export function execute(command: cli.ICommand) {
@@ -558,9 +561,6 @@ export function execute(command: cli.ICommand) {
     switch (command.type) {
       // Must not be logged in
       case cli.CommandType.login:
-        if (connectionInfo && !command.nonInteractive) {
-          throw new Error("You are already logged in from this machine.");
-        }
         break;
       case cli.CommandType.register:
         if (connectionInfo) {
@@ -700,7 +700,7 @@ function getTotalActiveFromDeploymentMetrics(metrics: DeploymentMetrics): number
 }
 
 async function login(command: cli.ILoginCommand): Promise<void> {
-  const serverUrl = command.serverUrl || DEFAULT_AETHER_SERVER_URL;
+  const serverUrl = command.serverUrl || connectionInfo?.customServerUrl || DEFAULT_AETHER_SERVER_URL;
 
   if (command.accessKey) {
     sdk = getSdk(command.accessKey, CLI_HEADERS, serverUrl);
@@ -712,9 +712,33 @@ async function login(command: cli.ILoginCommand): Promise<void> {
     return;
   }
 
+  if (connectionInfo && !command.nonInteractive) {
+    // A credential the server no longer accepts must not block signing in
+    // again: every other command already clears it on a 401.
+    const stillValid = await isStoredCredentialUsable(serverUrl);
+    if (stillValid) {
+      throw new Error("You are already logged in from this machine.");
+    }
+    log(chalk.yellow("The stored session is no longer valid. Signing in again."));
+    deleteConnectionInfoCache(/*printMessage*/ false);
+    connectionInfo = null;
+    sdk = null;
+  }
+
   if (command.nonInteractive) {
     throw new Error("Interactive login is unavailable in non-interactive mode. Re-run with --accessKey <key>.");
   }
+
+  if (!command.password) {
+    await browserLogin(command, serverUrl);
+    return;
+  }
+
+  log(
+    chalk.yellow(
+      "Password sign-in is deprecated and does not work on accounts with multi-factor authentication. Run 'aether login' to sign in through your browser."
+    )
+  );
 
   const { email, password } = await promptForLoginCredentials();
   if (!email) {
@@ -743,8 +767,8 @@ async function login(command: cli.ILoginCommand): Promise<void> {
 
   if (body.mfaRequired) {
     throw new Error(
-      "This account has multi-factor authentication enabled, which the CLI cannot complete. " +
-        "Create an access key in the dashboard (Account > Access Keys) and log in with: aether login --accessKey <key>"
+      "This account has multi-factor authentication enabled, which password sign-in cannot complete. " +
+        "Run 'aether login' without --password to authorize this machine through your browser."
     );
   }
 
@@ -758,10 +782,82 @@ async function login(command: cli.ILoginCommand): Promise<void> {
   log(chalk.green(`Successfully logged in as ${email}.`));
 }
 
-function logout(command: cli.ICommand): Promise<void> {
+async function browserLogin(command: cli.ILoginCommand, serverUrl: string): Promise<void> {
+  const deviceId = keyStore.readOrCreateDeviceId(generateDeviceId);
+
+  const result = await runBrowserLogin({
+    serverUrl,
+    deviceId,
+    deviceName: os.hostname(),
+    clientVersion: packageJson.version,
+    clientPlatform: `${process.platform}-${process.arch}`,
+    headers: CLI_HEADERS,
+    forceDeviceFlow: !!command.device,
+    log: (message: string) => log(message),
+  });
+
+  sdk = getSdk(result.accessKey, CLI_HEADERS, serverUrl);
+  serializeConnectionInfo(
+    result.accessKey,
+    /*preserveAccessKeyOnLogout*/ false,
+    command.serverUrl || connectionInfo?.customServerUrl,
+    {
+      credentialId: result.credentialId,
+      deviceId,
+      accountEmail: result.email,
+    }
+  );
+
+  log(chalk.green(`Signed in as ${result.email || "your Aether account"}.`));
+  log("This device is now authorized.");
+}
+
+async function isStoredCredentialUsable(serverUrl: string): Promise<boolean> {
+  try {
+    const probe = getSdk(connectionInfo.accessKey, CLI_HEADERS, connectionInfo.customServerUrl || serverUrl);
+    return await probe.isAuthenticated();
+  } catch {
+    // Offline or unreachable: assume the stored session is still good rather
+    // than discarding a working credential because the network is down.
+    return true;
+  }
+}
+
+async function logout(command: cli.ICommand): Promise<void> {
+  const current = connectionInfo;
+
+  if (current && current.credentialId) {
+    try {
+      await revokeCurrentDevice(current);
+      log("This device is no longer authorized on the server.");
+    } catch (err: any) {
+      log(
+        chalk.yellow(
+          `Could not revoke this device on the server (${err?.message || "unknown error"}). ` +
+            "It can still be revoked from the dashboard under Account > CLI & Devices."
+        )
+      );
+    }
+  }
+
   sdk = null;
   deleteConnectionInfoCache();
-  return Promise.resolve();
+}
+
+async function revokeCurrentDevice(current: ILoginConnectionInfo): Promise<void> {
+  const serverUrl = (current.customServerUrl || DEFAULT_AETHER_SERVER_URL).replace(/\/$/, "");
+  const response = await fetch(`${serverUrl}/v1/cli/devices/current`, {
+    method: "DELETE",
+    headers: { Accept: "application/json", Authorization: `Bearer ${current.accessKey}`, ...CLI_HEADERS },
+  });
+
+  // 401 means the credential is already dead; 404 means this server has no such
+  // endpoint. Neither is worth alarming the user about on the way out.
+  if (response.status === 204 || response.status === 404 || response.status === 401) {
+    return;
+  }
+
+  throw new Error(`HTTP ${response.status}`);
 }
 
 function formatDate(unixOffset: number): string {
@@ -1023,7 +1119,10 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
 
     if (parsedPlist && parsedPlist.CFBundleShortVersionString) {
       if (isValidVersion(parsedPlist.CFBundleShortVersionString)) {
-        progressLog(command, `Using the target binary version value "${parsedPlist.CFBundleShortVersionString}" from "${resolvedPlistFile}".\n`);
+        progressLog(
+          command,
+          `Using the target binary version value "${parsedPlist.CFBundleShortVersionString}" from "${resolvedPlistFile}".\n`
+        );
         return Promise.resolve(parsedPlist.CFBundleShortVersionString);
       } else {
         if (parsedPlist.CFBundleShortVersionString !== "$(MARKETING_VERSION)") {
@@ -1707,20 +1806,24 @@ export const runReactNativeBundleCommand = (
   });
 };
 
-function serializeConnectionInfo(accessKey: string, preserveAccessKeyOnLogout: boolean, customServerUrl?: string): void {
-  const connectionInfo: ILoginConnectionInfo = {
-    accessKey: accessKey,
-    preserveAccessKeyOnLogout: preserveAccessKeyOnLogout,
-  };
-  if (customServerUrl) {
-    connectionInfo.customServerUrl = customServerUrl;
-  }
+function serializeConnectionInfo(
+  accessKey: string,
+  preserveAccessKeyOnLogout: boolean,
+  customServerUrl?: string,
+  extra?: { credentialId?: string; deviceId?: string; accountEmail?: string }
+): void {
+  keyStore.writeCredential({
+    accessKey,
+    preserveAccessKeyOnLogout,
+    serverUrl: customServerUrl,
+    credentialId: extra?.credentialId,
+    deviceId: extra?.deviceId,
+    accountEmail: extra?.accountEmail,
+  });
 
-  fs.mkdirSync(path.dirname(configFilePath), { recursive: true });
-  const json: string = JSON.stringify(connectionInfo);
-  fs.writeFileSync(configFilePath, json, { encoding: "utf8" });
-
-  log(`Session file written to ${chalk.cyan(configFilePath)}. Run ${chalk.cyan("aether logout")} to terminate the session.`);
+  log(
+    `Credentials written to ${chalk.cyan(keyStore.getCredentialPath())}. Run ${chalk.cyan("aether logout")} to terminate the session.`
+  );
 }
 
 function sessionList(command: cli.ISessionListCommand): Promise<void> {
