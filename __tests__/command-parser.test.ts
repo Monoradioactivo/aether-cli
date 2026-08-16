@@ -452,6 +452,25 @@ describe("command-parser", () => {
       expect(cmd.serverUrl).toBe("https://staging.example.com");
     });
 
+    it("'login --device' asks for the printed-code flow", () => {
+      const cmd: any = parseArgs(["login", "--device"]);
+      expect(cmd.type).toBe(CommandType.login);
+      expect(cmd.device).toBe(true);
+      expect(cmd.password).toBe(false);
+    });
+
+    it("'login --password' selects the deprecated password flow", () => {
+      const cmd: any = parseArgs(["login", "--password"]);
+      expect(cmd.password).toBe(true);
+      expect(cmd.device).toBe(false);
+    });
+
+    it("bare 'login' asks for neither", () => {
+      const cmd: any = parseArgs(["login"]);
+      expect(cmd.device).toBe(false);
+      expect(cmd.password).toBe(false);
+    });
+
     it("'logout' returns the logout command", () => {
       const cmd = parseArgs(["logout"]);
       expect(cmd.type).toBe(CommandType.logout);

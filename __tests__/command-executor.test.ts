@@ -42,6 +42,15 @@ jest.mock("../script/management-sdk", () => {
   return ctor;
 });
 
+const mockRunBrowserLogin = jest.fn();
+jest.mock("../script/auth/browser-login", () => {
+  class UnsupportedServerError extends Error {}
+  return {
+    UnsupportedServerError,
+    runBrowserLogin: (...args: any[]) => mockRunBrowserLogin(...args),
+  };
+});
+
 jest.mock("../script/commands/debug", () => ({
   __esModule: true,
   default: jest.fn().mockResolvedValue(undefined),
@@ -122,6 +131,7 @@ describe("command-executor", () => {
   beforeEach(() => {
     resetSdkMocks();
     mockPromptGet.mockReset();
+    mockRunBrowserLogin.mockReset();
 
     savedCiEnv = {};
     for (const key of CI_ENV_VARS) {
@@ -159,8 +169,9 @@ describe("command-executor", () => {
   });
 
   describe("execute dispatch", () => {
-    it("login with existing session throws", async () => {
-      readFileSyncSpy.mockReturnValueOnce(JSON.stringify({ accessKey: "existing-key" }));
+    it("login with a session the server still accepts throws", async () => {
+      readFileSyncSpy.mockReturnValue(JSON.stringify({ accessKey: "existing-key" }));
+      mockSdkMethods.isAuthenticated.mockResolvedValue(true);
       await expect(executor.execute({ type: cli.CommandType.login, accessKey: null, serverUrl: null })).rejects.toThrow(
         /already logged in/
       );
@@ -694,13 +705,14 @@ describe("command-executor", () => {
       expect(writeFileSyncSpy).not.toHaveBeenCalled();
     });
 
-    it("login via prompt POSTs to /v1/auth/login and stores the returned accessKey", async () => {
+    it("login --password POSTs to /v1/auth/login and stores the returned accessKey", async () => {
       setLoginCredentials("user@example.com", "password123secret");
       mockSdkMethods.isAuthenticated.mockResolvedValue(true);
       fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ accessKey: "returned-ak" }), { status: 200 }));
       await executor.execute({
         type: cli.CommandType.login,
         accessKey: null,
+        password: true,
         serverUrl: "https://api.aetherpush.com",
       });
       const [url, init] = fetchSpy.mock.calls[0];
@@ -713,7 +725,7 @@ describe("command-executor", () => {
       expect(writeFileSyncSpy).toHaveBeenCalled();
     });
 
-    it("login via prompt explains the access-key path for MFA accounts", async () => {
+    it("login --password sends an MFA account to the browser flow instead", async () => {
       setLoginCredentials("user@example.com", "password123secret");
       fetchSpy.mockResolvedValueOnce(
         new Response(
@@ -725,33 +737,156 @@ describe("command-executor", () => {
         executor.execute({
           type: cli.CommandType.login,
           accessKey: null,
+          password: true,
           serverUrl: "https://api.aetherpush.com",
         })
-      ).rejects.toThrow(/multi-factor authentication.*--accessKey/s);
+      ).rejects.toThrow(/multi-factor authentication.*browser/s);
     });
 
-    it("login via prompt surfaces server error message", async () => {
+    it("login --password surfaces the server error message", async () => {
       setLoginCredentials("user@example.com", "wrong");
       fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ error: "Invalid credentials" }), { status: 401 }));
       await expect(
         executor.execute({
           type: cli.CommandType.login,
           accessKey: null,
+          password: true,
           serverUrl: "https://api.aetherpush.com",
         })
       ).rejects.toThrow(/Invalid credentials/);
     });
 
-    it("login via prompt rejects when fetch itself fails", async () => {
+    it("login --password rejects when fetch itself fails", async () => {
       setLoginCredentials("user@example.com", "password");
       fetchSpy.mockRejectedValueOnce(new TypeError("network down"));
       await expect(
         executor.execute({
           type: cli.CommandType.login,
           accessKey: null,
+          password: true,
           serverUrl: "https://api.aetherpush.com",
         })
       ).rejects.toThrow(/Unable to reach Aether/);
+    });
+
+    it("bare login runs the browser ceremony and stores what it returns", async () => {
+      mockRunBrowserLogin.mockResolvedValue({
+        accessKey: "browser-key",
+        expires: 123,
+        credentialId: "cred-1",
+        email: "user@example.com",
+      });
+
+      await executor.execute({
+        type: cli.CommandType.login,
+        accessKey: null,
+        serverUrl: "https://api.aetherpush.com",
+      });
+
+      expect(mockRunBrowserLogin).toHaveBeenCalledTimes(1);
+      const options = mockRunBrowserLogin.mock.calls[0][0];
+      expect(options.serverUrl).toBe("https://api.aetherpush.com");
+      expect(options.forceDeviceFlow).toBe(false);
+      expect(options.deviceId).toEqual(expect.any(String));
+      expect(options.clientPlatform).toContain(process.platform);
+
+      // Never prompts for a password, and never posts credentials anywhere.
+      expect(mockPromptGet).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const written = writeFileSyncSpy.mock.calls.map((call: any[]) => String(call[1])).join(" ");
+      expect(written).toContain("browser-key");
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("user@example.com"));
+    });
+
+    it("login --device asks the ceremony for the printed-code path", async () => {
+      mockRunBrowserLogin.mockResolvedValue({ accessKey: "browser-key", expires: 1 });
+
+      await executor.execute({
+        type: cli.CommandType.login,
+        accessKey: null,
+        device: true,
+        serverUrl: "https://api.aetherpush.com",
+      });
+
+      expect(mockRunBrowserLogin.mock.calls[0][0].forceDeviceFlow).toBe(true);
+    });
+
+    it("login replaces a stored credential the server no longer accepts", async () => {
+      readFileSyncSpy.mockReturnValue(JSON.stringify({ accessKey: "stale-key" }));
+      mockSdkMethods.isAuthenticated.mockResolvedValue(false);
+      mockRunBrowserLogin.mockResolvedValue({ accessKey: "fresh-key", expires: 1 });
+
+      await executor.execute({ type: cli.CommandType.login, accessKey: null, serverUrl: null });
+
+      expect(mockRunBrowserLogin).toHaveBeenCalled();
+      expect(unlinkSyncSpy).toHaveBeenCalled();
+    });
+
+    it("login keeps refusing when the network is down rather than discarding a working session", async () => {
+      readFileSyncSpy.mockReturnValue(JSON.stringify({ accessKey: "existing-key" }));
+      mockSdkMethods.isAuthenticated.mockRejectedValue(new Error("offline"));
+
+      await expect(executor.execute({ type: cli.CommandType.login, accessKey: null, serverUrl: null })).rejects.toThrow(
+        /already logged in/
+      );
+      expect(mockRunBrowserLogin).not.toHaveBeenCalled();
+    });
+
+    it("login surfaces a server that does not implement browser sign-in", async () => {
+      const { UnsupportedServerError } = require("../script/auth/browser-login");
+      mockRunBrowserLogin.mockRejectedValue(new UnsupportedServerError("nope, use --accessKey"));
+
+      await expect(
+        executor.execute({ type: cli.CommandType.login, accessKey: null, serverUrl: "https://old.example.com" })
+      ).rejects.toThrow(/--accessKey/);
+    });
+
+    it("logout revokes the device on the server before clearing local state", async () => {
+      readFileSyncSpy.mockImplementation((filePath: any) => {
+        if (String(filePath).endsWith("credentials.json")) {
+          return JSON.stringify({ accessKey: "the-key" });
+        }
+        return JSON.stringify({ credentialId: "cred-1", serverUrl: "https://api.aetherpush.com" });
+      });
+      fetchSpy.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+      await executor.execute({ type: cli.CommandType.logout });
+
+      const [url, init] = fetchSpy.mock.calls[0];
+      expect(url).toBe("https://api.aetherpush.com/v1/cli/devices/current");
+      expect(init.method).toBe("DELETE");
+      expect(init.headers.Authorization).toBe("Bearer the-key");
+      expect(unlinkSyncSpy).toHaveBeenCalled();
+    });
+
+    it("logout still clears local state when the remote revoke fails", async () => {
+      readFileSyncSpy.mockImplementation((filePath: any) => {
+        if (String(filePath).endsWith("credentials.json")) {
+          return JSON.stringify({ accessKey: "the-key" });
+        }
+        return JSON.stringify({ credentialId: "cred-1", serverUrl: "https://api.aetherpush.com" });
+      });
+      fetchSpy.mockRejectedValueOnce(new TypeError("network down"));
+
+      await executor.execute({ type: cli.CommandType.logout });
+
+      expect(unlinkSyncSpy).toHaveBeenCalled();
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("dashboard"));
+    });
+
+    it("logout of a key-only session skips the revoke call entirely", async () => {
+      readFileSyncSpy.mockImplementation((filePath: any) => {
+        if (String(filePath).endsWith("credentials.json")) {
+          return JSON.stringify({ accessKey: "ci-api-key" });
+        }
+        return JSON.stringify({ preserveAccessKeyOnLogout: true });
+      });
+
+      await executor.execute({ type: cli.CommandType.logout });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(unlinkSyncSpy).toHaveBeenCalled();
     });
 
     it("register happy path POSTs to /v1/auth/register", async () => {
