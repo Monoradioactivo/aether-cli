@@ -70,6 +70,8 @@ jest.mock("prompt", () => ({
 }));
 
 import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import * as cli from "../script/types/cli";
 import * as executorMod from "../script/command-executor";
 
@@ -127,11 +129,24 @@ describe("command-executor", () => {
     "BUILD_URL",
   ];
   let savedCiEnv: Record<string, string | undefined>;
+  let savedHome: string | undefined;
+  let savedLocalAppData: string | undefined;
+  let sandboxHome: string;
 
   beforeEach(() => {
     resetSdkMocks();
     mockPromptGet.mockReset();
     mockRunBrowserLogin.mockReset();
+
+    // The credential store resolves its paths from HOME. The fs spies below
+    // cover the calls it makes today, but an implementation that reaches for a
+    // different fs call would otherwise write into the developer's real home,
+    // which is exactly what happened once.
+    sandboxHome = fs.mkdtempSync(path.join(os.tmpdir(), "aether-cli-test-"));
+    savedHome = process.env.HOME;
+    savedLocalAppData = process.env.LOCALAPPDATA;
+    process.env.HOME = sandboxHome;
+    delete process.env.LOCALAPPDATA;
 
     savedCiEnv = {};
     for (const key of CI_ENV_VARS) {
@@ -151,6 +166,10 @@ describe("command-executor", () => {
     unlinkSyncSpy = jest.spyOn(fs, "unlinkSync").mockImplementation(() => undefined);
     mkdirSyncSpy = jest.spyOn(fs, "mkdirSync").mockImplementation(() => undefined as any);
     writeFileSyncSpy = jest.spyOn(fs, "writeFileSync").mockImplementation(() => undefined);
+    jest.spyOn(fs, "openSync").mockImplementation(() => 1234 as any);
+    jest.spyOn(fs, "closeSync").mockImplementation(() => undefined);
+    jest.spyOn(fs, "fchmodSync").mockImplementation(() => undefined);
+    jest.spyOn(fs, "chmodSync").mockImplementation(() => undefined);
 
     fetchSpy = jest.spyOn(globalThis, "fetch" as any);
   });
@@ -158,6 +177,12 @@ describe("command-executor", () => {
   afterEach(() => {
     jest.restoreAllMocks();
     executor.sdk = null;
+
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    if (savedLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = savedLocalAppData;
+    fs.rmSync(sandboxHome, { recursive: true, force: true });
 
     for (const key of CI_ENV_VARS) {
       if (savedCiEnv[key] === undefined) {
