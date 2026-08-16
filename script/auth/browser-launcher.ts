@@ -9,7 +9,21 @@ import * as childProcess from "child_process";
  * a way out that does not depend on this returning the truth.
  */
 export function openBrowser(url: string): boolean {
-  const { command, args } = resolveOpenCommand(url);
+  // The URL came from the server, and `--serverUrl` means the server is not
+  // always ours. Anything but an http(s) address is refused before it reaches
+  // the shell, and the openers are invoked in forms that cannot read it as a
+  // flag or as command text.
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return false;
+  }
+
+  const { command, args } = resolveOpenCommand(parsed.toString());
 
   try {
     const child = childProcess.spawn(command, args, { stdio: "ignore", detached: true });
@@ -31,11 +45,12 @@ export function openBrowser(url: string): boolean {
 
 function resolveOpenCommand(url: string): { command: string; args: string[] } {
   if (process.platform === "darwin") {
-    return { command: "open", args: [url] };
+    return { command: "open", args: ["--", url] };
   }
   if (process.platform === "win32") {
-    // The empty title argument keeps `start` from treating the URL as one.
-    return { command: "cmd", args: ["/c", "start", "", url] };
+    // Not `cmd /c start`: cmd re-parses its arguments, and Node's Windows
+    // quoting does not escape a double quote the way cmd reads one.
+    return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] };
   }
-  return { command: "xdg-open", args: [url] };
+  return { command: "xdg-open", args: ["--", url] };
 }

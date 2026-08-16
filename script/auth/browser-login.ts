@@ -208,7 +208,10 @@ async function runDeviceFlow(options: BrowserLoginOptions): Promise<BrowserLogin
   let intervalSeconds: number = typeof started.body.interval === "number" && started.body.interval > 0 ? started.body.interval : 5;
 
   options.log(`Open:\n${verificationUri}\n\nEnter code:\n${userCode}`);
-  (options.openBrowser || defaultOpenBrowser)(started.body.verification_uri_complete || verificationUri);
+  const completeUri = started.body.verification_uri_complete;
+  (options.openBrowser || defaultOpenBrowser)(
+    typeof completeUri === "string" && completeUri.length > 0 ? completeUri : verificationUri
+  );
   options.log("Waiting for authorization...");
 
   const deadline = Date.now() + expiresInSeconds * 1000;

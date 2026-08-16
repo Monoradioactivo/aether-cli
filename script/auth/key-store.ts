@@ -76,16 +76,38 @@ function readJson<T>(filePath: string): T | null {
 }
 
 function writeJson(filePath: string, value: unknown, mode?: number): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: DIRECTORY_MODE });
-  fs.writeFileSync(filePath, JSON.stringify(value), mode === undefined ? { encoding: "utf8" } : { encoding: "utf8", mode });
-  if (mode !== undefined) {
-    // writeFileSync only applies mode when it creates the file, so an existing
-    // world-readable file would keep its permissions without this.
+  const directory = path.dirname(filePath);
+  fs.mkdirSync(directory, { recursive: true, mode: DIRECTORY_MODE });
+  // mkdirSync applies its mode only to directories it creates, so a ~/.aether
+  // left behind by an older CLI keeps whatever the old umask gave it.
+  try {
+    fs.chmodSync(directory, DIRECTORY_MODE);
+  } catch {
+    // No POSIX mode to set here.
+  }
+
+  if (mode === undefined) {
+    fs.writeFileSync(filePath, JSON.stringify(value), { encoding: "utf8" });
+    return;
+  }
+
+  // O_NOFOLLOW refuses a symlink planted at the path, and narrowing the mode
+  // before the write means the secret is never briefly world-readable in an
+  // existing file.
+  let flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC;
+  if (typeof fs.constants.O_NOFOLLOW === "number") {
+    flags |= fs.constants.O_NOFOLLOW;
+  }
+  const handle = fs.openSync(filePath, flags, mode);
+  try {
     try {
-      fs.chmodSync(filePath, mode);
+      fs.fchmodSync(handle, mode);
     } catch {
       // Windows and some network filesystems have no POSIX mode to set.
     }
+    fs.writeFileSync(handle, JSON.stringify(value), { encoding: "utf8" });
+  } finally {
+    fs.closeSync(handle);
   }
 }
 
@@ -124,7 +146,10 @@ export function migrateLegacyConfig(): StoredCredential | null {
 
   try {
     writeCredential(credential);
-    removeFile(getLegacyConfigPath());
+    if (!removeFile(getLegacyConfigPath())) {
+      // The key is now in two places, one of them world-readable.
+      console.warn(`[Aether] Could not delete ${getLegacyConfigPath()}. It still holds your access key; remove it by hand.`);
+    }
   } catch {
     // A read-only home must not break every command. Serve the credential from
     // memory this run and try the migration again next time.

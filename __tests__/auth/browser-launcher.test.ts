@@ -55,17 +55,34 @@ describe("openBrowser", () => {
     const spawn = jest.spyOn(childProcess, "spawn").mockReturnValue({ on: jest.fn(), unref: jest.fn() } as any);
 
     setPlatform("darwin");
-    openBrowser("http://example.test");
+    openBrowser("http://example.test/");
     expect(spawn.mock.calls[0][0]).toBe("open");
+    // `--` stops the opener reading a URL as one of its own flags.
+    expect(spawn.mock.calls[0][1]).toEqual(["--", "http://example.test/"]);
 
     setPlatform("win32");
-    openBrowser("http://example.test");
-    expect(spawn.mock.calls[1][0]).toBe("cmd");
-    // The empty title keeps `start` from consuming the URL as a window title.
-    expect(spawn.mock.calls[1][1]).toEqual(["/c", "start", "", "http://example.test"]);
+    openBrowser("http://example.test/");
+    // Not `cmd /c start`: cmd re-parses its arguments, and a URL carrying a
+    // double quote would break out of the quoted argument into command text.
+    expect(spawn.mock.calls[1][0]).toBe("rundll32");
+    expect(spawn.mock.calls[1][1]).toEqual(["url.dll,FileProtocolHandler", "http://example.test/"]);
 
     setPlatform("linux");
-    openBrowser("http://example.test");
+    openBrowser("http://example.test/");
     expect(spawn.mock.calls[2][0]).toBe("xdg-open");
+    expect(spawn.mock.calls[2][1]).toEqual(["--", "http://example.test/"]);
+  });
+
+  it("refuses anything that is not an http address", () => {
+    const spawn = jest.spyOn(childProcess, "spawn").mockReturnValue({ on: jest.fn(), unref: jest.fn() } as any);
+
+    // The URL comes from the server, and --serverUrl means the server is not
+    // always ours.
+    expect(openBrowser("file:///etc/passwd")).toBe(false);
+    expect(openBrowser("javascript:alert(1)")).toBe(false);
+    expect(openBrowser("vscode://install")).toBe(false);
+    expect(openBrowser("not a url")).toBe(false);
+    expect(openBrowser("")).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
