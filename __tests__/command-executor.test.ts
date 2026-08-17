@@ -202,6 +202,38 @@ describe("command-executor", () => {
       );
     });
 
+    it("a stored credential with no server override targets production, not localhost", async () => {
+      // Only an explicit --serverUrl is persisted, so an absent one means the
+      // default. Falling through to the SDK's own default sends every
+      // authenticated command to localhost, which is what happened once.
+      readFileSyncSpy.mockReturnValue(JSON.stringify({ accessKey: "stored-key" }));
+      executor.sdk = null;
+      mockSdkMethods.getAccountInfo.mockResolvedValue({ email: "user@example.com" });
+
+      await executor.execute({ type: cli.CommandType.whoami });
+
+      const AccountManager = require("../script/management-sdk");
+      const serverUrl = AccountManager.mock.calls[AccountManager.mock.calls.length - 1][2];
+      expect(serverUrl).toBe("https://api.aetherpush.com");
+    });
+
+    it("an explicit server override is still honored on later commands", async () => {
+      readFileSyncSpy.mockImplementation((filePath: any) => {
+        if (String(filePath).endsWith("credentials.json")) {
+          return JSON.stringify({ accessKey: "stored-key" });
+        }
+        return JSON.stringify({ serverUrl: "https://api-staging.aetherpush.com" });
+      });
+      executor.sdk = null;
+      mockSdkMethods.getAccountInfo.mockResolvedValue({ email: "user@example.com" });
+
+      await executor.execute({ type: cli.CommandType.whoami });
+
+      const AccountManager = require("../script/management-sdk");
+      const serverUrl = AccountManager.mock.calls[AccountManager.mock.calls.length - 1][2];
+      expect(serverUrl).toBe("https://api-staging.aetherpush.com");
+    });
+
     it("default command without sdk and without connectionInfo throws", async () => {
       executor.sdk = null;
       await expect(executor.execute({ type: cli.CommandType.whoami })).rejects.toThrow(/not currently logged in/);

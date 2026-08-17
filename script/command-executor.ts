@@ -576,7 +576,7 @@ export function execute(command: cli.ICommand) {
           throw new Error("You are not currently logged in. Run 'aether login' to authenticate with Aether.");
         }
 
-        sdk = getSdk(connectionInfo.accessKey, CLI_HEADERS, connectionInfo.customServerUrl);
+        sdk = getSdk(connectionInfo.accessKey, CLI_HEADERS, resolveServerUrl(connectionInfo.customServerUrl));
         break;
     }
 
@@ -814,7 +814,7 @@ async function browserLogin(command: cli.ILoginCommand, serverUrl: string): Prom
 
 async function isStoredCredentialUsable(serverUrl: string): Promise<boolean> {
   try {
-    const probe = getSdk(connectionInfo.accessKey, CLI_HEADERS, connectionInfo.customServerUrl || serverUrl);
+    const probe = getSdk(connectionInfo.accessKey, CLI_HEADERS, resolveServerUrl(connectionInfo.customServerUrl) || serverUrl);
     return await probe.isAuthenticated();
   } catch {
     // Offline or unreachable: assume the stored session is still good rather
@@ -845,7 +845,7 @@ async function logout(command: cli.ICommand): Promise<void> {
 }
 
 async function revokeCurrentDevice(current: ILoginConnectionInfo): Promise<void> {
-  const serverUrl = (current.customServerUrl || DEFAULT_AETHER_SERVER_URL).replace(/\/$/, "");
+  const serverUrl = resolveServerUrl(current.customServerUrl).replace(/\/$/, "");
   const response = await fetch(`${serverUrl}/v1/cli/devices/current`, {
     method: "DELETE",
     headers: { Accept: "application/json", Authorization: `Bearer ${current.accessKey}`, ...CLI_HEADERS },
@@ -1889,6 +1889,15 @@ function whoami(command: cli.ICommand): Promise<void> {
 
 function isCommandOptionSpecified(option: any): boolean {
   return option !== undefined && option !== null;
+}
+
+/**
+ * Only an explicit --serverUrl is persisted, so an absent one means the default
+ * rather than nothing. Falling through to the SDK's own default would point the
+ * CLI at localhost.
+ */
+function resolveServerUrl(storedServerUrl?: string): string {
+  return storedServerUrl || DEFAULT_AETHER_SERVER_URL;
 }
 
 function getSdk(accessKey: string, headers: Record<string, string>, customServerUrl: string): AccountManager {
