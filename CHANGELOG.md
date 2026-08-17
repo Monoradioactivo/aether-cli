@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.4.2...v0.5.0) (2026-08-17)
+
+
+### Features
+
+* **auth:** sign in through the browser ([#95](https://github.com/Monoradioactivo/aether-cli/issues/95)) ([d406762](https://github.com/Monoradioactivo/aether-cli/commit/d406762110c2c289a3d0fd8d4427064445ad2961))
+
+
+### Bug Fixes
+
+* **auth:** fall back to the production server when none was overridden ([#97](https://github.com/Monoradioactivo/aether-cli/issues/97)) ([acc851d](https://github.com/Monoradioactivo/aether-cli/commit/acc851d4c29dc5dcbc8e14979850bb5b085548d3))
+
 ## [0.4.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.4.1...v0.4.2) (2026-08-16)
 
 
