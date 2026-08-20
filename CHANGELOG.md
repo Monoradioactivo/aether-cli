@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.5.0...v0.5.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **cli:** make the published bin executable ([9cc07c1](https://github.com/Monoradioactivo/aether-cli/commit/9cc07c164e1f4c6840b371382570e2889e7dc5ca))
+
 ## [0.5.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.4.2...v0.5.0) (2026-08-17)
 
 
