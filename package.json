@@ -6,7 +6,8 @@
   "types": "./bin/script/index.d.ts",
   "scripts": {
     "start": "node ./bin/script/cli.js",
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').chmodSync('bin/script/cli.js', 0o755)\"",
+    "prepack": "node -e \"require('fs').chmodSync('bin/script/cli.js', 0o755)\"",
     "clean": "rimraf bin",
     "typecheck": "tsc --noEmit",
     "prettier": "prettier --write \"./**/*.ts\"",
