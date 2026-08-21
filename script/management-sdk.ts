@@ -375,7 +375,8 @@ class AccountManager {
     }
 
     const message = (parsed && (parsed.error || parsed.message)) || text || res.statusText || "Request failed";
-    throw new AetherError(message, res.status, requestId);
+    const code: string | undefined = parsed && typeof parsed.code === "string" ? parsed.code : undefined;
+    throw new AetherError(message, res.status, requestId, code);
   }
 
   private headersToObject(h: Headers): Record<string, string> {

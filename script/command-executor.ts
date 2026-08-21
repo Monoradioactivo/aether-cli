@@ -544,6 +544,37 @@ function deserializeConnectionInfo(): ILoginConnectionInfo {
   };
 }
 
+const DASHBOARD_SESSION_REQUIRED_CODE = "dashboard_session_required";
+
+function dashboardSessionHint(command: cli.ICommand): string | undefined {
+  switch (command.type) {
+    case cli.CommandType.accessKeyAdd:
+      return "Access keys are created in the dashboard under Account > CLI access keys, not from the CLI.";
+    case cli.CommandType.accessKeyPatch:
+      return isCommandOptionSpecified((<cli.IAccessKeyPatchCommand>command).ttl)
+        ? "An access key's lifetime cannot be changed from the CLI, so nothing was updated: revoke the key and create a new one in the dashboard under Account > CLI access keys."
+        : undefined;
+    case cli.CommandType.apiKeyAdd:
+      return "API keys are created in the dashboard under API Keys, not from the CLI.";
+    case cli.CommandType.apiKeyPatch: {
+      const patch = <cli.IApiKeyPatchCommand>command;
+      return isCommandOptionSpecified(patch.ttl) || isCommandOptionSpecified(patch.scopes)
+        ? "An API key's expiration cannot be changed and its scopes cannot be widened, so nothing was updated: create a new key with the settings you need in the dashboard under API Keys and revoke this one."
+        : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+function withDashboardSessionHint(error: unknown, command: cli.ICommand): unknown {
+  if (!(error instanceof AetherError) || error.code !== DASHBOARD_SESSION_REQUIRED_CODE) {
+    return error;
+  }
+  const hint = dashboardSessionHint(command);
+  return hint ? new AetherError(hint, error.statusCode, error.requestId, error.code) : error;
+}
+
 export function execute(command: cli.ICommand) {
   connectionInfo = deserializeConnectionInfo();
   command.nonInteractive = resolveNonInteractive(command);
@@ -557,7 +588,7 @@ export function execute(command: cli.ICommand) {
     enrichDescriptionWithCiMetadata(command);
   }
 
-  return Promise.resolve().then(() => {
+  const dispatched = Promise.resolve().then(() => {
     switch (command.type) {
       // Must not be logged in
       case cli.CommandType.login:
@@ -687,6 +718,10 @@ export function execute(command: cli.ICommand) {
         // We should never see this message as invalid commands should be caught by the argument parser.
         throw new Error("Invalid command:  " + JSON.stringify(command));
     }
+  });
+
+  return dispatched.catch((error: unknown) => {
+    throw withDashboardSessionHint(error, command);
   });
 }
 
