@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.5.1...v0.5.2) (2026-08-21)
+
+
+### Bug Fixes
+
+* **cli:** explain dashboard-only key commands in one line ([#100](https://github.com/Monoradioactivo/aether-cli/issues/100)) ([3bf3132](https://github.com/Monoradioactivo/aether-cli/commit/3bf313245b1b1417b274a5b32fa853a1590e29b5))
+
 ## [0.5.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.5.0...v0.5.1) (2026-08-20)
 
 
