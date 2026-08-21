@@ -74,6 +74,7 @@ import * as os from "os";
 import * as path from "path";
 import * as cli from "../script/types/cli";
 import * as executorMod from "../script/command-executor";
+import { AetherError } from "../script/errors";
 
 const executor: any = executorMod;
 
@@ -250,6 +251,92 @@ describe("command-executor", () => {
     it("unknown command type throws", async () => {
       executor.sdk = mockSdkMethods;
       await expect(executor.execute({ type: 99999 })).rejects.toThrow(/Invalid command/);
+    });
+  });
+
+  describe("dashboard-session hints", () => {
+    const SERVER_PARAGRAPH =
+      "Creating an access key requires a dashboard login session. If you are already signed in there and still see this, sign out and sign in again.";
+    const refused = (): AetherError => new AetherError(SERVER_PARAGRAPH, 403, "req_1", "dashboard_session_required");
+
+    beforeEach(() => {
+      executor.sdk = mockSdkMethods;
+    });
+
+    it("accessKeyAdd maps dashboard_session_required to the CLI access keys hint", async () => {
+      mockSdkMethods.addAccessKey.mockRejectedValue(refused());
+      await expect(executor.execute({ type: cli.CommandType.accessKeyAdd, name: "ci" })).rejects.toThrow(
+        "Access keys are created in the dashboard under Account > CLI access keys, not from the CLI."
+      );
+    });
+
+    it("accessKeyPatch --ttl maps to the revoke-and-recreate hint", async () => {
+      mockSdkMethods.patchAccessKey.mockRejectedValue(refused());
+      await expect(executor.execute({ type: cli.CommandType.accessKeyPatch, oldName: "ci", ttl: 604800000 })).rejects.toThrow(
+        "An access key's lifetime cannot be changed from the CLI, so nothing was updated: revoke the key and create a new one in the dashboard under Account > CLI access keys."
+      );
+    });
+
+    it("accessKeyPatch --name without --ttl keeps the server message even with the code", async () => {
+      mockSdkMethods.patchAccessKey.mockRejectedValue(refused());
+      await expect(executor.execute({ type: cli.CommandType.accessKeyPatch, oldName: "ci", newName: "ci-old" })).rejects.toThrow(
+        SERVER_PARAGRAPH
+      );
+    });
+
+    it("apiKeyAdd maps to the API Keys hint", async () => {
+      mockSdkMethods.addApiKey.mockRejectedValue(refused());
+      await expect(executor.execute({ type: cli.CommandType.apiKeyAdd, name: "ci", scopes: ["read"] })).rejects.toThrow(
+        "API keys are created in the dashboard under API Keys, not from the CLI."
+      );
+    });
+
+    const API_KEY_PATCH_HINT =
+      "An API key's expiration cannot be changed and its scopes cannot be widened, so nothing was updated: create a new key with the settings you need in the dashboard under API Keys and revoke this one.";
+
+    it("apiKeyPatch --ttl maps to the API Keys hint", async () => {
+      mockSdkMethods.patchApiKey.mockRejectedValue(refused());
+      await expect(executor.execute({ type: cli.CommandType.apiKeyPatch, id: "uuid-1", ttl: 31536000000 })).rejects.toThrow(
+        API_KEY_PATCH_HINT
+      );
+    });
+
+    it("apiKeyPatch --scopes maps to the API Keys hint", async () => {
+      mockSdkMethods.patchApiKey.mockRejectedValue(refused());
+      await expect(executor.execute({ type: cli.CommandType.apiKeyPatch, id: "uuid-1", scopes: ["deploy", "apps"] })).rejects.toThrow(
+        API_KEY_PATCH_HINT
+      );
+    });
+
+    it("apiKeyPatch --name without --ttl or --scopes keeps the server message even with the code", async () => {
+      mockSdkMethods.patchApiKey.mockRejectedValue(refused());
+      await expect(executor.execute({ type: cli.CommandType.apiKeyPatch, id: "uuid-1", newName: "renamed" })).rejects.toThrow(
+        SERVER_PARAGRAPH
+      );
+    });
+
+    it("the mapped error keeps statusCode, requestId and code", async () => {
+      mockSdkMethods.addAccessKey.mockRejectedValue(refused());
+      try {
+        await executor.execute({ type: cli.CommandType.accessKeyAdd, name: "ci" });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(AetherError);
+        expect(err.statusCode).toBe(403);
+        expect(err.requestId).toBe("req_1");
+        expect(err.code).toBe("dashboard_session_required");
+        expect(err.message).not.toContain("sign out");
+      }
+    });
+
+    it("a mapped command without the code keeps the server message", async () => {
+      mockSdkMethods.addAccessKey.mockRejectedValue(new AetherError("Server says no", 403, "req_2"));
+      await expect(executor.execute({ type: cli.CommandType.accessKeyAdd, name: "ci" })).rejects.toThrow("Server says no");
+    });
+
+    it("an unmapped command with the code keeps the server message", async () => {
+      mockSdkMethods.getAccessKeys.mockRejectedValue(refused());
+      await expect(executor.execute({ type: cli.CommandType.accessKeyList, format: "table" })).rejects.toThrow(SERVER_PARAGRAPH);
     });
   });
 
@@ -785,10 +872,7 @@ describe("command-executor", () => {
     it("login --password sends an MFA account to the browser flow instead", async () => {
       setLoginCredentials("user@example.com", "password123secret");
       fetchSpy.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ mfaRequired: true, pendingToken: "pt", expires: 123, methods: ["passkey"] }),
-          { status: 200 }
-        )
+        new Response(JSON.stringify({ mfaRequired: true, pendingToken: "pt", expires: 123, methods: ["passkey"] }), { status: 200 })
       );
       await expect(
         executor.execute({

@@ -66,8 +66,8 @@ Requires Node.js 22 or later.
 | `promote` | Promote a release between deployments |
 | `rollback` | Roll a deployment back to a previous release |
 | `collaborator add\|ls\|rm` | Manage app collaborators |
-| `access-key add\|ls\|patch\|rm` | Manage session-style CLI keys |
-| `api-key add\|ls\|patch\|rm` | Manage scoped API keys for CI/CD |
+| `access-key ls\|patch\|rm` | List, rename and revoke CLI access keys (created in the dashboard under Account > CLI access keys) |
+| `api-key ls\|patch\|rm` | List, rename, narrow and revoke scoped API keys for CI/CD (created in the dashboard under API Keys) |
 | `session ls\|rm` | Manage active login sessions |
 | `debug ios\|android` | Stream Aether logs from a running app |
 

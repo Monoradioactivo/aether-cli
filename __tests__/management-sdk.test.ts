@@ -628,6 +628,32 @@ describe("management-sdk / AccountManager", () => {
       }
     });
 
+    it("carries the server's error code when the body has one", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(403, { error: "Dashboard session required", code: "dashboard_session_required" }));
+      try {
+        await sdk.addAccessKey("ci");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(AetherError);
+        expect(err.statusCode).toBe(403);
+        expect(err.code).toBe("dashboard_session_required");
+        expect(err.message).toBe("Dashboard session required");
+      }
+    });
+
+    it("leaves code undefined when the body has none", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(404, { error: "Not found" }));
+      try {
+        await sdk.getApp("missing");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(AetherError);
+        expect(err.code).toBeUndefined();
+      }
+    });
+
     it("propagates the requestId from the X-Request-Id header", async () => {
       const sdk = newSdk();
       fetchSpy.mockResolvedValueOnce(jsonResponse(500, { error: "Boom" }, { "x-request-id": "req_xyz" }));

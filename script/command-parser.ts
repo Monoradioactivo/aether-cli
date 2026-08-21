@@ -42,23 +42,20 @@ export function showHelp(showRootDescription?: boolean): void {
   }
 }
 
+const ACCESS_KEY_DASHBOARD_NOTE =
+  "Access keys are created in the dashboard under Account > CLI access keys; this command is refused from a CLI session.";
+const API_KEY_DASHBOARD_NOTE = "API keys are created in the dashboard under API Keys; this command is refused from a CLI session.";
+
 function accessKeyAdd(commandName: string, yargs: yargs.Argv): void {
   isValidCommand = true;
   yargs
-    .usage(USAGE_PREFIX + " access-key " + commandName + " <accessKeyName>")
+    .usage(USAGE_PREFIX + " access-key " + commandName + " <accessKeyName>\n\n" + ACCESS_KEY_DASHBOARD_NOTE)
     .demand(/*count*/ 1, /*max*/ 1) // Require exactly one non-option arguments
-    .example(
-      "access-key " + commandName + ' "VSTS Integration"',
-      'Creates a new access key with the name "VSTS Integration", which expires in 60 days'
-    )
-    .example(
-      "access-key " + commandName + ' "One time key" --ttl 5m',
-      'Creates a new access key with the name "One time key", which expires in 5 minutes'
-    )
     .option("ttl", {
       default: "60d",
       demand: false,
-      description: "Duration string which specifies the amount of time that the access key should remain valid for (e.g 5m, 60d, 1y)",
+      description:
+        "Duration string (e.g 5m, 60d, 1y). Refused from a CLI session: create the key in the dashboard under Account > CLI access keys",
       type: "string",
     });
 
@@ -74,10 +71,6 @@ function accessKeyPatch(commandName: string, yargs: yargs.Argv): void {
       "access-key " + commandName + ' "Key for build server" --name "Key for CI machine"',
       'Renames the access key named "Key for build server" to "Key for CI machine"'
     )
-    .example(
-      "access-key " + commandName + ' "Key for build server" --ttl 7d',
-      'Updates the access key named "Key for build server" to expire in 7 days'
-    )
     .option("name", {
       default: null,
       demand: false,
@@ -87,7 +80,8 @@ function accessKeyPatch(commandName: string, yargs: yargs.Argv): void {
     .option("ttl", {
       default: null,
       demand: false,
-      description: "Duration string which specifies the amount of time that the access key should remain valid for (e.g 5m, 60d, 1y)",
+      description:
+        "Duration string (e.g 5m, 60d, 1y). Refused from a CLI session: revoke the key and create a new one in the dashboard under Account > CLI access keys",
       type: "string",
     });
   addCommonConfiguration(yargs);
@@ -123,16 +117,8 @@ function accessKeyRemove(commandName: string, yargs: yargs.Argv): void {
 function apiKeyAdd(commandName: string, yargs: yargs.Argv): void {
   isValidCommand = true;
   yargs
-    .usage(USAGE_PREFIX + " api-key " + commandName + " <name> --scopes <list>")
+    .usage(USAGE_PREFIX + " api-key " + commandName + " <name> --scopes <list>\n\n" + API_KEY_DASHBOARD_NOTE)
     .demand(/*count*/ 1, /*max*/ 1)
-    .example(
-      "api-key " + commandName + " github-actions-ci --scopes deploy,read",
-      'Creates a new API key named "github-actions-ci" with deploy + read scopes and no expiration'
-    )
-    .example(
-      "api-key " + commandName + " ci-deploy --scopes deploy --ttl 90d",
-      'Creates a new API key that expires in 90 days, scoped only to "deploy"'
-    )
     .option("scopes", {
       default: null,
       demand: false,
@@ -142,7 +128,8 @@ function apiKeyAdd(commandName: string, yargs: yargs.Argv): void {
     .option("ttl", {
       default: null,
       demand: false,
-      description: "Duration the key remains valid for (e.g. 5m, 60d, 1y). Omit for no expiration.",
+      description:
+        "Duration the key remains valid for (e.g. 5m, 60d, 1y). Refused from a CLI session: create the key in the dashboard under API Keys",
       type: "string",
     });
 
@@ -155,8 +142,7 @@ function apiKeyPatch(commandName: string, yargs: yargs.Argv): void {
     .usage(USAGE_PREFIX + " api-key " + commandName + " <id> [options]")
     .demand(/*count*/ 1, /*max*/ 1)
     .example("api-key " + commandName + " 5b3f1c8a-... --name renamed-key", "Renames the API key with the given id")
-    .example("api-key " + commandName + " 5b3f1c8a-... --scopes deploy,read,apps", "Replaces the scope set on the API key")
-    .example("api-key " + commandName + " 5b3f1c8a-... --ttl 1y", "Extends the API key expiration to one year from now")
+    .example("api-key " + commandName + " 5b3f1c8a-... --scopes deploy", "Narrows the scope set on the API key")
     .option("name", {
       default: null,
       demand: false,
@@ -166,13 +152,15 @@ function apiKeyPatch(commandName: string, yargs: yargs.Argv): void {
     .option("scopes", {
       default: null,
       demand: false,
-      description: "New comma-separated list of scopes (deploy, apps, keys, read)",
+      description:
+        "New comma-separated list of scopes (deploy, apps, keys, read). Only narrowing works; to add a scope, create a new key in the dashboard under API Keys and revoke this one",
       type: "string",
     })
     .option("ttl", {
       default: null,
       demand: false,
-      description: "New duration the key remains valid for (e.g. 5m, 60d, 1y)",
+      description:
+        "New duration the key remains valid for (e.g. 5m, 60d, 1y). Refused: an expiration cannot be changed; create a new key in the dashboard under API Keys and revoke this one",
       type: "string",
     });
 
@@ -412,8 +400,12 @@ yargs
     yargs
       .usage(USAGE_PREFIX + " access-key <command>")
       .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments.
-      .command("add", "Create a new access key associated with your account", (yargs: yargs.Argv) => accessKeyAdd("add", yargs))
-      .command("patch", "Update the name and/or TTL of an existing access key", (yargs: yargs.Argv) => accessKeyPatch("patch", yargs))
+      .command("add", "Create a new access key (dashboard only, under Account > CLI access keys)", (yargs: yargs.Argv) =>
+        accessKeyAdd("add", yargs)
+      )
+      .command("patch", "Rename an existing access key (its lifetime cannot be changed; revoke and recreate)", (yargs: yargs.Argv) =>
+        accessKeyPatch("patch", yargs)
+      )
       .command("remove", "Remove an existing access key", (yargs: yargs.Argv) => accessKeyRemove("remove", yargs))
       .command("rm", "Remove an existing access key", (yargs: yargs.Argv) => accessKeyRemove("rm", yargs))
       .command("list", "List the access keys associated with your account", (yargs: yargs.Argv) => accessKeyList("list", yargs))
@@ -427,8 +419,14 @@ yargs
     yargs
       .usage(USAGE_PREFIX + " api-key <command>")
       .demand(/*count*/ 2, /*max*/ 2)
-      .command("add", "Create a new API key for CI/CD use", (yargs: yargs.Argv) => apiKeyAdd("add", yargs))
-      .command("patch", "Update an existing API key's name, scopes, or expiration", (yargs: yargs.Argv) => apiKeyPatch("patch", yargs))
+      .command("add", "Create a new API key for CI/CD use (dashboard only, under API Keys)", (yargs: yargs.Argv) =>
+        apiKeyAdd("add", yargs)
+      )
+      .command(
+        "patch",
+        "Rename an existing API key or narrow its scopes (a new expiration or wider scopes need a new key)",
+        (yargs: yargs.Argv) => apiKeyPatch("patch", yargs)
+      )
       .command("list", "List the API keys associated with your tenant", (yargs: yargs.Argv) => apiKeyList("list", yargs))
       .command("ls", "List the API keys associated with your tenant", (yargs: yargs.Argv) => apiKeyList("ls", yargs))
       .command("remove", "Revoke an existing API key", (yargs: yargs.Argv) => apiKeyRemove("remove", yargs))
