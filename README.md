@@ -120,7 +120,7 @@ aether login --serverUrl http://localhost:3000
 
 ## CI/CD
 
-The CLI detects CI environments through the `CI` variable and runs non-interactively there; `--ci` forces it. Ready-made pipeline templates for GitLab CI, CircleCI, and Jenkins live in [`examples/ci/`](./examples/ci/), and GitHub Actions has a dedicated action, [`aetherpush-deploy-action`](https://github.com/Monoradioactivo/aetherpush-deploy-action). The [CI/CD guides](https://docs.aetherpush.com/ci-cd/) walk through each platform.
+The CLI detects CI environments through the `CI` variable and runs non-interactively there; `--ci` forces it. Ready-made pipeline templates for GitLab CI, CircleCI, Jenkins, and Bitrise live in [`examples/ci/`](./examples/ci/), and GitHub Actions has a dedicated action, [`aetherpush-deploy-action`](https://github.com/Monoradioactivo/aetherpush-deploy-action). The [CI/CD guides](https://docs.aetherpush.com/ci-cd/) walk through each platform.
 
 ## Migrating from CodePush
 

@@ -11,7 +11,7 @@
     {
       "customType": "regex",
       "fileMatch": [
-        "^examples/ci/(gitlab-ci\\.yml|Jenkinsfile|circleci-config\\.yml)$"
+        "^examples/ci/(gitlab-ci\\.yml|Jenkinsfile|circleci-config\\.yml|bitrise\\.yml)$"
       ],
       "matchStrings": [
         "AETHER_CLI_VERSION: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",

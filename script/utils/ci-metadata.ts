@@ -2,7 +2,7 @@
 
 import * as cli from "../types/cli";
 
-export type CiProvider = "github" | "gitlab" | "circleci" | "jenkins";
+export type CiProvider = "github" | "gitlab" | "circleci" | "bitrise" | "jenkins";
 
 export interface CiMetadata {
   provider: CiProvider;
@@ -76,6 +76,20 @@ function detectCircleci(env: NodeJS.ProcessEnv): CiMetadata | null {
   };
 }
 
+function detectBitrise(env: NodeJS.ProcessEnv): CiMetadata | null {
+  if (env.BITRISE_IO !== "true") {
+    return null;
+  }
+
+  return {
+    provider: "bitrise",
+    sha: shortSha(env.BITRISE_GIT_COMMIT),
+    branch: env.BITRISE_GIT_BRANCH || undefined,
+    pr: env.BITRISE_PULL_REQUEST || undefined,
+    run: env.BITRISE_BUILD_URL || undefined,
+  };
+}
+
 function detectJenkins(env: NodeJS.ProcessEnv): CiMetadata | null {
   if (!env.JENKINS_URL) {
     return null;
@@ -92,7 +106,7 @@ function detectJenkins(env: NodeJS.ProcessEnv): CiMetadata | null {
 
 export function detectCiMetadata(): CiMetadata | null {
   const env = process.env;
-  return detectGithub(env) || detectGitlab(env) || detectCircleci(env) || detectJenkins(env);
+  return detectGithub(env) || detectGitlab(env) || detectCircleci(env) || detectBitrise(env) || detectJenkins(env);
 }
 
 export function formatCiMetadata(meta: CiMetadata): string {
