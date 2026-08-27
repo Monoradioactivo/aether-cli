@@ -68,6 +68,27 @@ workflows:
               --deploymentName "$AETHER_DEPLOYMENT" \
               --rollout "$AETHER_ROLLOUT" \
               --json > release.json
+            node --input-type=commonjs -e '
+              const fs = require("fs");
+              const raw = fs.readFileSync("release.json", "utf8").trim();
+              const lines = raw.split(String.fromCharCode(10));
+              const r = JSON.parse(lines[lines.length - 1]);
+              const out = {
+                label: r.label,
+                packageHash: r.packageHash,
+                size: r.size,
+                appVersion: r.appVersion,
+                releaseMethod: r.releaseMethod,
+                rollout: r.rollout,
+                isMandatory: r.isMandatory,
+                isDisabled: r.isDisabled
+              };
+              Object.keys(out).forEach(function (k) {
+                if (out[k] === undefined || out[k] === null) delete out[k];
+              });
+              fs.writeFileSync("release.json.tmp", JSON.stringify(out));
+              fs.renameSync("release.json.tmp", "release.json");
+            '
             cp release.json "$BITRISE_DEPLOY_DIR/release.json"
     - deploy-to-bitrise-io:
         inputs:
@@ -133,6 +154,27 @@ workflows:
               --deploymentName "$AETHER_DEPLOYMENT" \
               --rollout "$AETHER_ROLLOUT" \
               --json > release.json
+            node --input-type=commonjs -e '
+              const fs = require("fs");
+              const raw = fs.readFileSync("release.json", "utf8").trim();
+              const lines = raw.split(String.fromCharCode(10));
+              const r = JSON.parse(lines[lines.length - 1]);
+              const out = {
+                label: r.label,
+                packageHash: r.packageHash,
+                size: r.size,
+                appVersion: r.appVersion,
+                releaseMethod: r.releaseMethod,
+                rollout: r.rollout,
+                isMandatory: r.isMandatory,
+                isDisabled: r.isDisabled
+              };
+              Object.keys(out).forEach(function (k) {
+                if (out[k] === undefined || out[k] === null) delete out[k];
+              });
+              fs.writeFileSync("release.json.tmp", JSON.stringify(out));
+              fs.renameSync("release.json.tmp", "release.json");
+            '
             cp release.json "$BITRISE_DEPLOY_DIR/release.json"
     - deploy-to-bitrise-io:
         inputs:
