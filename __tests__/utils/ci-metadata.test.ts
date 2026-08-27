@@ -22,6 +22,11 @@ const CI_ENV_VARS = [
   "CIRCLE_BRANCH",
   "CIRCLE_PR_NUMBER",
   "CIRCLE_BUILD_URL",
+  "BITRISE_IO",
+  "BITRISE_GIT_COMMIT",
+  "BITRISE_GIT_BRANCH",
+  "BITRISE_PULL_REQUEST",
+  "BITRISE_BUILD_URL",
   "JENKINS_URL",
   "GIT_COMMIT",
   "GIT_BRANCH",
@@ -130,6 +135,70 @@ describe("ci-metadata", () => {
       });
     });
 
+    it("detects Bitrise with full metadata", () => {
+      process.env.BITRISE_IO = "true";
+      process.env.BITRISE_GIT_COMMIT = "abc1234567890def";
+      process.env.BITRISE_GIT_BRANCH = "main";
+      process.env.BITRISE_PULL_REQUEST = "42";
+      process.env.BITRISE_BUILD_URL = "https://app.bitrise.io/build/0123456789abcdef";
+
+      expect(detectCiMetadata()).toEqual({
+        provider: "bitrise",
+        sha: "abc1234",
+        branch: "main",
+        pr: "42",
+        run: "https://app.bitrise.io/build/0123456789abcdef",
+      });
+    });
+
+    it("returns sparse Bitrise metadata when only BITRISE_IO is set", () => {
+      process.env.BITRISE_IO = "true";
+
+      expect(detectCiMetadata()).toEqual({
+        provider: "bitrise",
+        sha: undefined,
+        branch: undefined,
+        pr: undefined,
+        run: undefined,
+      });
+    });
+
+    it("ignores Bitrise variables when BITRISE_IO is absent", () => {
+      process.env.BITRISE_BUILD_URL = "https://app.bitrise.io/build/0123456789abcdef";
+      process.env.BITRISE_GIT_BRANCH = "main";
+
+      expect(detectCiMetadata()).toBeNull();
+    });
+
+    it("returns no PR for a Bitrise push build", () => {
+      process.env.BITRISE_IO = "true";
+      process.env.BITRISE_GIT_COMMIT = "abc1234567890def";
+      process.env.BITRISE_GIT_BRANCH = "main";
+      process.env.BITRISE_PULL_REQUEST = "";
+
+      const meta = detectCiMetadata();
+      expect(meta?.provider).toBe("bitrise");
+      expect(meta?.pr).toBeUndefined();
+    });
+
+    it("prefers CircleCI over Bitrise when both signals are set", () => {
+      process.env.CIRCLECI = "true";
+      process.env.CIRCLE_SHA1 = "circle1";
+      process.env.BITRISE_IO = "true";
+      process.env.BITRISE_GIT_COMMIT = "bitrise1";
+
+      expect(detectCiMetadata()?.provider).toBe("circleci");
+    });
+
+    it("prefers Bitrise over Jenkins when both signals are set", () => {
+      process.env.BITRISE_IO = "true";
+      process.env.BITRISE_GIT_COMMIT = "bitrise1";
+      process.env.JENKINS_URL = "https://jenkins.internal/";
+      process.env.GIT_COMMIT = "jenkins1";
+
+      expect(detectCiMetadata()?.provider).toBe("bitrise");
+    });
+
     it("detects Jenkins via JENKINS_URL presence", () => {
       process.env.JENKINS_URL = "https://jenkins.internal/";
       process.env.GIT_COMMIT = "abcdef1234567890";
@@ -190,6 +259,17 @@ describe("ci-metadata", () => {
 
     it("emits only the provider when no other fields are present", () => {
       expect(formatCiMetadata({ provider: "jenkins" })).toBe("[ci=jenkins]");
+    });
+
+    it("formats Bitrise metadata", () => {
+      const meta: CiMetadata = {
+        provider: "bitrise",
+        sha: "abc1234",
+        branch: "main",
+        pr: "42",
+        run: "https://app.bitrise.io/build/0123456789abcdef",
+      };
+      expect(formatCiMetadata(meta)).toBe("[ci=bitrise sha=abc1234 branch=main pr=42 run=https://app.bitrise.io/build/0123456789abcdef]");
     });
   });
 

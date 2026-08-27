@@ -1,0 +1,140 @@
+format_version: '25'
+default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
+project_type: react-native
+
+app:
+  envs:
+  - CI: "true"
+    opts:
+      is_expand: false
+  - AETHER_CLI_VERSION: "0.4.1"
+    opts:
+      is_expand: false
+  - AETHER_APP_NAME: "my-react-native-app"
+    opts:
+      is_expand: false
+  - AETHER_PLATFORM: "android"
+    opts:
+      is_expand: false
+
+workflows:
+  deploy_staging:
+    tools:
+      nodejs: 22:installed
+    triggers:
+      push:
+      - branch: main
+    envs:
+    - AETHER_DEPLOYMENT: "Staging"
+      opts:
+        is_expand: false
+    - AETHER_ROLLOUT: "100%"
+      opts:
+        is_expand: false
+    steps:
+    - git-clone: {}
+    - script:
+        title: Install dependencies and Aether CLI
+        inputs:
+        - content: |-
+            set -eu
+            npm ci
+            npm install -g "@aetherpush/cli@${AETHER_CLI_VERSION}"
+            INSTALLED=$(aether --version | tr -d ' \r\n')
+            if [ "$INSTALLED" != "$AETHER_CLI_VERSION" ]; then
+              echo "Installed Aether CLI '$INSTALLED' does not match pinned '$AETHER_CLI_VERSION'."
+              exit 1
+            fi
+    - script:
+        title: Log in to Aether
+        inputs:
+        - content: |-
+            set -eu
+            if [ -z "${AETHER_API_KEY:-}" ]; then
+              echo "AETHER_API_KEY is not set. Add it as a Bitrise Secret."
+              exit 1
+            fi
+            if [ -n "${AETHER_API_URL:-}" ]; then
+              aether login --accessKey "$AETHER_API_KEY" --serverUrl "$AETHER_API_URL"
+            else
+              aether login --accessKey "$AETHER_API_KEY"
+            fi
+    - script:
+        title: Release React Native OTA update
+        inputs:
+        - content: |-
+            set -eu
+            aether release-react "$AETHER_APP_NAME" "$AETHER_PLATFORM" \
+              --deploymentName "$AETHER_DEPLOYMENT" \
+              --rollout "$AETHER_ROLLOUT" \
+              --json > release.json
+            cp release.json "$BITRISE_DEPLOY_DIR/release.json"
+    - deploy-to-bitrise-io:
+        inputs:
+        - deploy_path: "$BITRISE_DEPLOY_DIR"
+        - notify_user_groups: none
+
+  deploy_production:
+    tools:
+      nodejs: 22:installed
+    envs:
+    - AETHER_DEPLOYMENT: "Production"
+      opts:
+        is_expand: false
+    - AETHER_ROLLOUT: "25%"
+      opts:
+        is_expand: false
+    - AETHER_RELEASE_BRANCH: "main"
+      opts:
+        is_expand: false
+    steps:
+    - script:
+        title: Require the release branch
+        inputs:
+        - content: |-
+            set -eu
+            if [ "${BITRISE_GIT_BRANCH:-}" != "$AETHER_RELEASE_BRANCH" ]; then
+              echo "Production releases run from '$AETHER_RELEASE_BRANCH' only. This build is on '${BITRISE_GIT_BRANCH:-unknown}'."
+              exit 1
+            fi
+    - git-clone: {}
+    - script:
+        title: Install dependencies and Aether CLI
+        inputs:
+        - content: |-
+            set -eu
+            npm ci
+            npm install -g "@aetherpush/cli@${AETHER_CLI_VERSION}"
+            INSTALLED=$(aether --version | tr -d ' \r\n')
+            if [ "$INSTALLED" != "$AETHER_CLI_VERSION" ]; then
+              echo "Installed Aether CLI '$INSTALLED' does not match pinned '$AETHER_CLI_VERSION'."
+              exit 1
+            fi
+    - script:
+        title: Log in to Aether
+        inputs:
+        - content: |-
+            set -eu
+            if [ -z "${AETHER_API_KEY:-}" ]; then
+              echo "AETHER_API_KEY is not set. Add it as a Bitrise Secret."
+              exit 1
+            fi
+            if [ -n "${AETHER_API_URL:-}" ]; then
+              aether login --accessKey "$AETHER_API_KEY" --serverUrl "$AETHER_API_URL"
+            else
+              aether login --accessKey "$AETHER_API_KEY"
+            fi
+    - script:
+        title: Release React Native OTA update
+        inputs:
+        - content: |-
+            set -eu
+            aether release-react "$AETHER_APP_NAME" "$AETHER_PLATFORM" \
+              --deploymentName "$AETHER_DEPLOYMENT" \
+              --rollout "$AETHER_ROLLOUT" \
+              --json > release.json
+            cp release.json "$BITRISE_DEPLOY_DIR/release.json"
+    - deploy-to-bitrise-io:
+        inputs:
+        - deploy_path: "$BITRISE_DEPLOY_DIR"
+        - notify_user_groups: none
