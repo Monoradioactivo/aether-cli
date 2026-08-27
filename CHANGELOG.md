@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.5.2...v0.6.0) (2026-08-27)
+
+
+### Features
+
+* **ci:** add bitrise CI support ([#102](https://github.com/Monoradioactivo/aether-cli/issues/102)) ([396ee67](https://github.com/Monoradioactivo/aether-cli/commit/396ee67e5f4dbe7a1bc36c9b05f2e0239df3f45c))
+
 ## [0.5.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.5.1...v0.5.2) (2026-08-21)
 
 
