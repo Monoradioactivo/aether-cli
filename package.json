@@ -6,14 +6,15 @@
   "types": "./bin/script/index.d.ts",
   "scripts": {
     "start": "node ./bin/script/cli.js",
-    "build": "tsc && node -e \"require('fs').chmodSync('bin/script/cli.js', 0o755)\"",
+    "build": "npm run pins:check && tsc && node -e \"require('fs').chmodSync('bin/script/cli.js', 0o755)\"",
     "prepack": "node -e \"require('fs').chmodSync('bin/script/cli.js', 0o755)\"",
     "clean": "rimraf bin",
     "typecheck": "tsc --noEmit",
     "prettier": "prettier --write \"./**/*.ts\"",
     "lint": "npx eslint ./script/**/*.ts",
     "lint:fix": "npx eslint ./script/**/*.ts --fix",
-    "test": "jest"
+    "test": "jest",
+    "pins:check": "node scripts/check-version-pins.mjs"
   },
   "bin": {
     "aether": "bin/script/cli.js"

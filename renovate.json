@@ -27,10 +27,17 @@
       "matchManagers": [
         "custom.regex"
       ],
+      "matchPackageNames": [
+        "@aetherpush/cli"
+      ],
       "semanticCommitType": "docs",
       "semanticCommitScope": "ci",
       "automerge": true,
-      "automergeStrategy": "squash"
+      "automergeStrategy": "squash",
+      "schedule": [
+        "* * * * *"
+      ],
+      "minimumReleaseAge": null
     },
     {
       "matchManagers": [
