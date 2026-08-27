@@ -39,22 +39,39 @@ variables:
         --json > release.json
     - |
       set -eu
-      node -e '
+      node --input-type=commonjs -e '
         const fs = require("fs");
-        const r = JSON.parse(fs.readFileSync("release.json", "utf8"));
+        const raw = fs.readFileSync("release.json", "utf8").trim();
+        const rawLines = raw.split(String.fromCharCode(10));
+        const r = JSON.parse(rawLines[rawLines.length - 1]);
+        const out = {
+          label: r.label,
+          packageHash: r.packageHash,
+          size: r.size,
+          appVersion: r.appVersion,
+          releaseMethod: r.releaseMethod,
+          rollout: r.rollout,
+          isMandatory: r.isMandatory,
+          isDisabled: r.isDisabled
+        };
+        Object.keys(out).forEach(function (k) {
+          if (out[k] === undefined || out[k] === null) delete out[k];
+        });
+        fs.writeFileSync("release.json.tmp", JSON.stringify(out));
+        fs.renameSync("release.json.tmp", "release.json");
         const fields = {
-          RELEASE_LABEL: r.label,
-          RELEASE_PACKAGE_HASH: r.packageHash,
-          RELEASE_SIZE: r.size,
-          RELEASE_APP_VERSION: r.appVersion,
-          RELEASE_METHOD: r.releaseMethod,
-          RELEASE_ROLLOUT: r.rollout,
-          RELEASE_IS_MANDATORY: r.isMandatory,
-          RELEASE_IS_DISABLED: r.isDisabled
+          RELEASE_LABEL: out.label,
+          RELEASE_PACKAGE_HASH: out.packageHash,
+          RELEASE_SIZE: out.size,
+          RELEASE_APP_VERSION: out.appVersion,
+          RELEASE_METHOD: out.releaseMethod,
+          RELEASE_ROLLOUT: out.rollout,
+          RELEASE_IS_MANDATORY: out.isMandatory,
+          RELEASE_IS_DISABLED: out.isDisabled
         };
         const lines = Object.entries(fields)
-          .filter(([, v]) => v !== undefined && v !== null)
-          .map(([k, v]) => k + "=" + v);
+          .filter(function (entry) { return entry[1] !== undefined && entry[1] !== null; })
+          .map(function (entry) { return entry[0] + "=" + entry[1]; });
         fs.writeFileSync("release.env", lines.join("\n") + "\n");
       '
   artifacts:
