@@ -2,51 +2,21 @@
 
 import { detectCiMetadata, formatCiMetadata, enrichDescriptionWithCiMetadata, CiMetadata } from "../../script/utils/ci-metadata";
 import * as cli from "../../script/types/cli";
-
-const CI_ENV_VARS = [
-  "CI",
-  "GITHUB_ACTIONS",
-  "GITHUB_SHA",
-  "GITHUB_REF",
-  "GITHUB_REF_NAME",
-  "GITHUB_SERVER_URL",
-  "GITHUB_REPOSITORY",
-  "GITHUB_RUN_ID",
-  "GITLAB_CI",
-  "CI_COMMIT_SHA",
-  "CI_COMMIT_REF_NAME",
-  "CI_MERGE_REQUEST_IID",
-  "CI_JOB_URL",
-  "CIRCLECI",
-  "CIRCLE_SHA1",
-  "CIRCLE_BRANCH",
-  "CIRCLE_PR_NUMBER",
-  "CIRCLE_BUILD_URL",
-  "BITRISE_IO",
-  "BITRISE_GIT_COMMIT",
-  "BITRISE_GIT_BRANCH",
-  "BITRISE_PULL_REQUEST",
-  "BITRISE_BUILD_URL",
-  "JENKINS_URL",
-  "GIT_COMMIT",
-  "GIT_BRANCH",
-  "CHANGE_ID",
-  "BUILD_URL",
-];
+import { CI_ENVIRONMENT_VARIABLES_TO_SCRUB } from "../fixtures/ci-environment";
 
 describe("ci-metadata", () => {
   let savedCiEnv: Record<string, string | undefined>;
 
   beforeEach(() => {
     savedCiEnv = {};
-    for (const key of CI_ENV_VARS) {
+    for (const key of CI_ENVIRONMENT_VARIABLES_TO_SCRUB) {
       savedCiEnv[key] = process.env[key];
       delete process.env[key];
     }
   });
 
   afterEach(() => {
-    for (const key of CI_ENV_VARS) {
+    for (const key of CI_ENVIRONMENT_VARIABLES_TO_SCRUB) {
       if (savedCiEnv[key] === undefined) {
         delete process.env[key];
       } else {
