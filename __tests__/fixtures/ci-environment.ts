@@ -1,0 +1,33 @@
+// Copyright (c) Aether. All rights reserved.
+
+// Add every provider environment variable here so ambient CI state cannot leak into test results.
+export const CI_ENVIRONMENT_VARIABLES_TO_SCRUB = [
+  "CI",
+  "GITHUB_ACTIONS",
+  "GITHUB_SHA",
+  "GITHUB_REF",
+  "GITHUB_REF_NAME",
+  "GITHUB_SERVER_URL",
+  "GITHUB_REPOSITORY",
+  "GITHUB_RUN_ID",
+  "GITLAB_CI",
+  "CI_COMMIT_SHA",
+  "CI_COMMIT_REF_NAME",
+  "CI_MERGE_REQUEST_IID",
+  "CI_JOB_URL",
+  "CIRCLECI",
+  "CIRCLE_SHA1",
+  "CIRCLE_BRANCH",
+  "CIRCLE_PR_NUMBER",
+  "CIRCLE_BUILD_URL",
+  "BITRISE_IO",
+  "BITRISE_GIT_COMMIT",
+  "BITRISE_GIT_BRANCH",
+  "BITRISE_PULL_REQUEST",
+  "BITRISE_BUILD_URL",
+  "JENKINS_URL",
+  "GIT_COMMIT",
+  "GIT_BRANCH",
+  "CHANGE_ID",
+  "BUILD_URL",
+] as const;
