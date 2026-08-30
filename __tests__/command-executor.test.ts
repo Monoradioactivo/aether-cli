@@ -70,6 +70,7 @@ jest.mock("prompt", () => ({
   get: (...args: any[]) => mockPromptGet(...args),
 }));
 
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -1579,6 +1580,82 @@ describe("command-executor", () => {
       });
       expect(stdoutMessages.some((m) => m.includes("Uploading release package"))).toBe(false);
       expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Uploading release package"));
+    });
+
+    it("with --json --privateKeyPath keeps sign chatter off stdout and writes a signature file", async () => {
+      mkdirSyncSpy.mockRestore();
+      writeFileSyncSpy.mockRestore();
+      const parent = fs.mkdtempSync(path.join(os.tmpdir(), "aether-json-sign-"));
+      const updateDir = path.join(parent, "CodePush");
+      const privateKeyPath = path.join(parent, "private-key.pem");
+      fs.mkdirSync(updateDir);
+      fs.writeFileSync(path.join(updateDir, "bundle.js"), "console.log('signed-json')");
+      const { privateKey } = crypto.generateKeyPairSync("rsa", {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      });
+      fs.writeFileSync(privateKeyPath, privateKey);
+
+      mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+      const pkg = {
+        label: "v3",
+        packageHash: "abc123hash",
+        size: 4242,
+        appVersion: "1.0.0",
+        blobUrl: "https://cdn.example.com/blob/v3",
+        description: "first release",
+        releasedBy: "adrian@aetherpush.com",
+        releaseMethod: "Upload",
+        uploadTime: 1714867200000,
+        rollout: 100,
+        isMandatory: false,
+        isDisabled: false,
+      };
+      mockSdkMethods.release.mockResolvedValue(pkg);
+
+      try {
+        await executor.release({
+          type: cli.CommandType.release,
+          appName: "MyApp",
+          deploymentName: "Production",
+          package: updateDir,
+          appStoreVersion: "1.0.0",
+          description: "first release",
+          disabled: false,
+          mandatory: false,
+          rollout: 100,
+          noDuplicateReleaseError: false,
+          json: true,
+          privateKeyPath,
+        });
+
+        const stdoutMessages = consoleLogSpy.mock.calls.map((c) => String(c[0]));
+        expect(stdoutMessages).toHaveLength(1);
+        expect(JSON.parse(stdoutMessages[0])).toEqual({
+          label: "v3",
+          packageHash: "abc123hash",
+          size: 4242,
+          appVersion: "1.0.0",
+          blobUrl: "https://cdn.example.com/blob/v3",
+          description: "first release",
+          releasedBy: "adrian@aetherpush.com",
+          releaseMethod: "Upload",
+          uploadTime: 1714867200000,
+          rollout: 100,
+          isMandatory: false,
+          isDisabled: false,
+        });
+        expect(stdoutMessages[0].includes("\n")).toBe(false);
+        expect(stdoutMessages.some((m) => m.includes("Generated a release signature"))).toBe(false);
+        expect(stdoutMessages.some((m) => m.includes("Deleting previous release signature"))).toBe(false);
+        expect(stdoutMessages.some((m) => m.includes("Signing the release contents"))).toBe(false);
+        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Generated a release signature"));
+        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Signing the release contents"));
+        expect(fs.existsSync(path.join(updateDir, ".codepushrelease"))).toBe(true);
+      } finally {
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
     });
 
     it("without --json keeps progress on stdout and emits no JSON payload", async () => {
