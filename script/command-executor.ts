@@ -1544,7 +1544,7 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
       if (command.privateKeyPath) {
         throwForInvalidSignedReleaseFolder(filePath, isSingleFilePackage);
         progressLog(command, chalk.cyan("\nSigning the release contents:\n"));
-        await sign(command.privateKeyPath, filePath);
+        await sign(command.privateKeyPath, filePath, (message) => progressLog(command, message));
       }
 
       progressLog(command, "Uploading release package...");
@@ -1681,7 +1681,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         if (command.privateKeyPath) {
           throwForInvalidSignedReleaseFolder(outputFolder, false);
           progressLog(command, chalk.cyan("\nSigning the bundle:\n"));
-          await sign(command.privateKeyPath, outputFolder);
+          await sign(command.privateKeyPath, outputFolder, (message) => progressLog(command, message));
         } else {
           progressLog(command, "private key was not provided");
         }

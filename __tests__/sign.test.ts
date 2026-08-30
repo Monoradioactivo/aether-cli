@@ -128,6 +128,15 @@ describe("sign", () => {
       expect(decoded.contentHash).toBe(recomputed);
     });
 
+    it("sends progress through the provided logger instead of console.log", async () => {
+      const logger = jest.fn();
+      await sign(privateKeyPath, updateDir, logger);
+
+      expect(logger).toHaveBeenCalledWith(expect.stringContaining("Generated a release signature"));
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(fs.existsSync(path.join(updateDir, ".codepushrelease"))).toBe(true);
+    });
+
     it("overwrites an existing .codepushrelease when re-signing modified contents", async () => {
       // First signing
       await sign(privateKeyPath, updateDir);

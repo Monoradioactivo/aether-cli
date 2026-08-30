@@ -15,7 +15,11 @@ interface CodeSigningClaims {
   contentHash: string;
 }
 
-export default async function sign(privateKeyPath: string, updateContentsPath: string): Promise<void> {
+export default async function sign(
+  privateKeyPath: string,
+  updateContentsPath: string,
+  log: (message: string) => void = console.log
+): Promise<void> {
   if (!privateKeyPath) {
     return Promise.resolve<void>(null);
   }
@@ -55,7 +59,7 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
   }
 
   if (prevSignatureExists) {
-    console.log(`Deleting previous release signature at ${signatureFilePath}`);
+    log(`Deleting previous release signature at ${signatureFilePath}`);
     await fs.unlink(signatureFilePath);
   }
 
@@ -74,7 +78,7 @@ export default async function sign(privateKeyPath: string, updateContentsPath: s
 
       try {
         await fs.writeFile(signatureFilePath, signedJwt);
-        console.log(`Generated a release signature and wrote it to ${signatureFilePath}`);
+        log(`Generated a release signature and wrote it to ${signatureFilePath}`);
         resolve();
       } catch (error) {
         reject(error);
