@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.6.1...v0.7.0) (2026-08-30)
+
+
+### Features
+
+* **cli:** add a deployment metrics command ([#110](https://github.com/Monoradioactivo/aether-cli/issues/110)) ([d9414bf](https://github.com/Monoradioactivo/aether-cli/commit/d9414bf872796633173fea1e0b4c6c598d297343))
+
+
+### Bug Fixes
+
+* **cli:** keep signing chatter off --json stdout ([#113](https://github.com/Monoradioactivo/aether-cli/issues/113)) ([847bcb5](https://github.com/Monoradioactivo/aether-cli/commit/847bcb5a540301b2f46457882ba7846e083e6899))
+
 ## [0.6.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.6.0...v0.6.1) (2026-08-30)
 
 
