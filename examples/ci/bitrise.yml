@@ -7,7 +7,7 @@ app:
   - CI: "true"
     opts:
       is_expand: false
-  - AETHER_CLI_VERSION: "0.6.0"
+  - AETHER_CLI_VERSION: "0.6.1"
     opts:
       is_expand: false
   - AETHER_APP_NAME: "my-react-native-app"

@@ -425,6 +425,32 @@ describe("command-parser", () => {
       const cmd = parseArgs(["deployment", "history", "MyApp", "Prod", "--displayAuthor"]);
       expect(cmd.displayAuthor).toBe(true);
     });
+
+    it("'deployment metrics <app> <deployment>' defaults format=table and sends no date range", () => {
+      const cmd = parseArgs(["deployment", "metrics", "MyApp", "Prod"]);
+      expect(cmd.type).toBe(CommandType.deploymentMetrics);
+      expect(cmd.appName).toBe("MyApp");
+      expect(cmd.deploymentName).toBe("Prod");
+      expect(cmd.format).toBe("table");
+      expect(cmd.from).toBeUndefined();
+      expect(cmd.to).toBeUndefined();
+    });
+
+    it("'deployment m' (alias) maps to deploymentMetrics", () => {
+      const cmd = parseArgs(["deployment", "m", "MyApp", "Prod"]);
+      expect(cmd.type).toBe(CommandType.deploymentMetrics);
+    });
+
+    it("'deployment metrics' carries --from and --to through", () => {
+      const cmd = parseArgs(["deployment", "metrics", "MyApp", "Prod", "--from", "2026-08-01", "--to", "2026-08-15"]);
+      expect(cmd.from).toBe("2026-08-01");
+      expect(cmd.to).toBe("2026-08-15");
+    });
+
+    it("'deployment metrics' accepts --format json", () => {
+      const cmd = parseArgs(["deployment", "metrics", "MyApp", "Prod", "--format", "json"]);
+      expect(cmd.format).toBe("json");
+    });
   });
 
   describe("login / logout", () => {

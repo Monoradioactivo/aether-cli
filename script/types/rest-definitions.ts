@@ -87,6 +87,28 @@ export interface DeploymentMetrics {
   [packageLabelOrAppVersion: string]: UpdateMetrics;
 }
 
+export interface DeploymentDayMetrics {
+  active: number;
+  downloaded: number;
+  installed: number;
+  failed: number;
+  downloadedDelta: number | null;
+  installedDelta: number | null;
+  failedDelta: number | null;
+}
+
+export interface DeploymentMetricsHistoryDay {
+  date: string;
+  labels: { [packageLabel: string]: DeploymentDayMetrics };
+}
+
+export interface DeploymentMetricsHistory {
+  from: string;
+  to: string;
+  historyStartsAt: string | null;
+  days: DeploymentMetricsHistoryDay[];
+}
+
 export type ApiKeyScope = "deploy" | "apps" | "keys" | "read";
 
 export interface ApiKey {

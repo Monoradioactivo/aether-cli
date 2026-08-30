@@ -20,6 +20,7 @@ const mockSdkMethods: Record<string, jest.Mock> = {
   getDeployment: jest.fn(),
   getDeploymentHistory: jest.fn(),
   getDeploymentMetrics: jest.fn(),
+  getDeploymentMetricsHistory: jest.fn(),
   removeDeployment: jest.fn(),
   renameDeployment: jest.fn(),
   release: jest.fn(),
@@ -750,6 +751,304 @@ describe("command-executor", () => {
       expect(mockSdkMethods.getAccountInfo).toHaveBeenCalled();
       expect(mockSdkMethods.getDeploymentHistory).toHaveBeenCalledWith("MyApp", "Prod");
       expect(mockSdkMethods.getDeploymentMetrics).toHaveBeenCalledWith("MyApp", "Prod");
+    });
+
+    it("deploymentMetrics forwards the date range to the sdk", async () => {
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue({
+        from: "2026-08-01",
+        to: "2026-08-15",
+        historyStartsAt: null,
+        days: [],
+      });
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "table",
+        from: "2026-08-01",
+        to: "2026-08-15",
+      });
+      expect(mockSdkMethods.getDeploymentMetricsHistory).toHaveBeenCalledWith("MyApp", "Prod", "2026-08-01", "2026-08-15");
+    });
+
+    it("deploymentMetrics passes undefined dates through when no range is given", async () => {
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue({
+        from: "2026-08-01",
+        to: "2026-08-30",
+        historyStartsAt: null,
+        days: [],
+      });
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "table",
+      });
+      expect(mockSdkMethods.getDeploymentMetricsHistory).toHaveBeenCalledWith("MyApp", "Prod", undefined, undefined);
+    });
+
+    it("deploymentMetrics with --format json emits the server payload verbatim", async () => {
+      const payload = {
+        from: "2026-08-20",
+        to: "2026-08-21",
+        historyStartsAt: "2026-08-20",
+        days: [
+          {
+            date: "2026-08-21",
+            labels: {
+              v1: {
+                active: 10,
+                downloaded: 20,
+                installed: 18,
+                failed: 2,
+                downloadedDelta: 5,
+                installedDelta: 4,
+                failedDelta: 0,
+              },
+            },
+          },
+        ],
+      };
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue(payload);
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "json",
+      });
+      const printed = consoleLogSpy.mock.calls.map((call: any[]) => String(call[0])).join("\n");
+      expect(JSON.parse(printed)).toEqual(payload);
+    });
+
+    it("deploymentMetrics table renders a null delta as a bare value and a real delta in parentheses", async () => {
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue({
+        from: "2026-08-20",
+        to: "2026-08-21",
+        historyStartsAt: "2026-08-20",
+        days: [
+          {
+            date: "2026-08-20",
+            labels: {
+              v1: {
+                active: 10,
+                downloaded: 500,
+                installed: 480,
+                failed: 12,
+                downloadedDelta: null,
+                installedDelta: null,
+                failedDelta: null,
+              },
+            },
+          },
+          {
+            date: "2026-08-21",
+            labels: {
+              v1: {
+                active: 14,
+                downloaded: 530,
+                installed: 505,
+                failed: 12,
+                downloadedDelta: 30,
+                installedDelta: 25,
+                failedDelta: 0,
+              },
+            },
+          },
+        ],
+      });
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "table",
+      });
+      const printed = consoleLogSpy.mock.calls.map((call: any[]) => String(call[0])).join("\n");
+      expect(printed).toContain("500");
+      expect(printed).not.toContain("500 (+");
+      expect(printed).toContain("530 (+30)");
+      expect(printed).toContain("12 (+0)");
+      expect(printed).toContain("2026-08-20");
+      expect(printed).toContain("2026-08-21");
+    });
+
+    it("deploymentMetrics table strips control characters out of an attacker-supplied label", async () => {
+      const esc = String.fromCharCode(27);
+      const poisoned = `v9${esc}[2J${esc}[31mFAIL`;
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue({
+        from: "2026-08-20",
+        to: "2026-08-20",
+        historyStartsAt: null,
+        days: [
+          {
+            date: "2026-08-20",
+            labels: {
+              [poisoned]: {
+                active: 1,
+                downloaded: 1,
+                installed: 1,
+                failed: 0,
+                downloadedDelta: null,
+                installedDelta: null,
+                failedDelta: null,
+              },
+              "v8\nInjected": {
+                active: 1,
+                downloaded: 1,
+                installed: 1,
+                failed: 0,
+                downloadedDelta: null,
+                installedDelta: null,
+                failedDelta: null,
+              },
+            },
+          },
+        ],
+      });
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "table",
+      });
+      const printed = consoleLogSpy.mock.calls.map((call: any[]) => String(call[0])).join("\n");
+      expect(printed).not.toContain(esc + "[2J");
+      expect(printed).toContain("v9[2J[31mFAIL");
+      expect(printed).toContain("v8Injected");
+    });
+
+    it("deploymentMetrics json keeps the raw label, where JSON escaping makes it inert", async () => {
+      const esc = String.fromCharCode(27);
+      const poisoned = `v9${esc}[2J`;
+      const payload = {
+        from: "2026-08-20",
+        to: "2026-08-20",
+        historyStartsAt: null,
+        days: [
+          {
+            date: "2026-08-20",
+            labels: {
+              [poisoned]: {
+                active: 1,
+                downloaded: 1,
+                installed: 1,
+                failed: 0,
+                downloadedDelta: null,
+                installedDelta: null,
+                failedDelta: null,
+              },
+            },
+          },
+        ],
+      };
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue(payload);
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "json",
+      });
+      const printed = consoleLogSpy.mock.calls.map((call: any[]) => String(call[0])).join("\n");
+      expect(printed).not.toContain(esc);
+      expect(JSON.parse(printed)).toEqual(payload);
+    });
+
+    it("deploymentMetrics table orders labels by release number, not lexically", async () => {
+      const day = (n: number) => ({
+        active: n,
+        downloaded: n,
+        installed: n,
+        failed: 0,
+        downloadedDelta: null,
+        installedDelta: null,
+        failedDelta: null,
+      });
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue({
+        from: "2026-08-20",
+        to: "2026-08-20",
+        historyStartsAt: null,
+        days: [
+          {
+            date: "2026-08-20",
+            labels: { v11: day(11), v2: day(2), v1: day(1), v10: day(10) },
+          },
+        ],
+      });
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "table",
+      });
+      const printed = consoleLogSpy.mock.calls.map((call: any[]) => String(call[0])).join("\n");
+      const order = ["v1", "v2", "v10", "v11"].map((label) => printed.indexOf(`${label} `));
+      expect(order.every((index) => index >= 0)).toBe(true);
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+    });
+
+    it("deploymentMetrics table shows the history-start line when the server collapsed the range below it", async () => {
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue({
+        from: "2026-01-05",
+        to: "2026-01-05",
+        historyStartsAt: "2026-08-20",
+        days: [],
+      });
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "table",
+      });
+      const printed = consoleLogSpy.mock.calls.map((call: any[]) => String(call[0])).join("\n");
+      expect(printed).toContain("History starts at: 2026-08-20");
+      expect(printed).toContain("No daily metrics recorded in this range");
+    });
+
+    it("deploymentMetrics table omits the history-start line when it precedes the range", async () => {
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue({
+        from: "2026-08-20",
+        to: "2026-08-21",
+        historyStartsAt: "2026-08-01",
+        days: [],
+      });
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "table",
+      });
+      const printed = consoleLogSpy.mock.calls.map((call: any[]) => String(call[0])).join("\n");
+      expect(printed).not.toContain("History starts at");
+      expect(printed).toContain("2026-08-20 to 2026-08-21");
+    });
+
+    it("deploymentMetrics table reports an empty range without printing a table", async () => {
+      mockSdkMethods.getDeploymentMetricsHistory.mockResolvedValue({
+        from: "2026-08-01",
+        to: "2026-08-30",
+        historyStartsAt: null,
+        days: [],
+      });
+      await executor.execute({
+        type: cli.CommandType.deploymentMetrics,
+        appName: "MyApp",
+        deploymentName: "Prod",
+        format: "table",
+      });
+      const printed = consoleLogSpy.mock.calls.map((call: any[]) => String(call[0])).join("\n");
+      expect(printed).toContain("No daily metrics recorded in this range");
+      expect(printed).not.toContain("Downloaded");
+    });
+
+    it("deploymentMetrics rejects an unsupported format before calling the sdk", async () => {
+      await expect(
+        executor.execute({
+          type: cli.CommandType.deploymentMetrics,
+          appName: "MyApp",
+          deploymentName: "Prod",
+          format: "csv",
+        })
+      ).rejects.toThrow("Invalid format");
+      expect(mockSdkMethods.getDeploymentMetricsHistory).not.toHaveBeenCalled();
     });
   });
 
