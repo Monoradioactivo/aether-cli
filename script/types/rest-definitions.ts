@@ -56,15 +56,6 @@ export interface Deployment {
   package?: Package;
 }
 
-export interface BlobInfo {
-  size: number;
-  url: string;
-}
-
-export interface PackageHashToBlobInfoMap {
-  [packageHash: string]: BlobInfo;
-}
-
 export interface PackageInfo {
   appVersion?: string;
   description?: string;
@@ -77,8 +68,6 @@ export interface PackageInfo {
 
 export interface Package extends PackageInfo {
   blobUrl: string;
-  diffPackageMap?: PackageHashToBlobInfoMap;
-  manifestBlobUrl?: string;
   originalDeployment?: string;
   originalLabel?: string;
   releasedBy?: string;
