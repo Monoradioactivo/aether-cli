@@ -60,7 +60,7 @@ Requires Node.js 22 or later.
 | `login`, `logout` | Session management |
 | `whoami` | Show the current account |
 | `app add\|ls\|rm\|rename\|transfer` | Manage apps |
-| `deployment add\|ls\|rm\|rename\|history\|clear` | Manage deployment channels |
+| `deployment add\|ls\|rm\|rename\|history\|metrics\|clear` | Manage deployment channels |
 | `release`, `release-react` | Upload a new release |
 | `patch` | Update metadata of an existing release (rollout %, mandatory, disabled, description) |
 | `promote` | Promote a release between deployments |

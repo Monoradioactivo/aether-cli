@@ -352,6 +352,45 @@ function deploymentList(commandName: string, yargs: yargs.Argv): void {
   addCommonConfiguration(yargs);
 }
 
+function deploymentMetrics(commandName: string, yargs: yargs.Argv): void {
+  isValidCommand = true;
+  yargs
+    .usage(USAGE_PREFIX + " deployment " + commandName + " <appName> <deploymentName> [options]")
+    .demand(2, 2)
+    .example(
+      "deployment " + commandName + " MyApp MyDeployment",
+      'Displays the last 30 days of daily metrics for deployment "MyDeployment" from app "MyApp"'
+    )
+    .example(
+      "deployment " + commandName + " MyApp MyDeployment --from 2026-08-01 --to 2026-08-15",
+      "Displays the daily metrics recorded between the two dates"
+    )
+    .example(
+      "deployment " + commandName + " MyApp MyDeployment --format json",
+      "Displays the daily metrics in JSON format, for scripting"
+    )
+    .option("format", {
+      default: "table",
+      demand: false,
+      description: 'Output format to display the metrics history with ("json" or "table")',
+      type: "string",
+    })
+    .option("from", {
+      default: null,
+      demand: false,
+      description: "First UTC day to report, as YYYY-MM-DD. Defaults to 29 days before the end of the range",
+      type: "string",
+    })
+    .option("to", {
+      default: null,
+      demand: false,
+      description: "Last UTC day to report, as YYYY-MM-DD. Defaults to today",
+      type: "string",
+    });
+
+  addCommonConfiguration(yargs);
+}
+
 function deploymentRemove(commandName: string, yargs: yargs.Argv): void {
   isValidCommand = true;
   yargs
@@ -550,6 +589,10 @@ yargs
       .command("ls", "List the deployments associated with an app", (yargs: yargs.Argv) => deploymentList("ls", yargs))
       .command("history", "Display the release history for a deployment", (yargs: yargs.Argv) => deploymentHistory("history", yargs))
       .command("h", "Display the release history for a deployment", (yargs: yargs.Argv) => deploymentHistory("h", yargs))
+      .command("metrics", "Display the daily metrics history for a deployment", (yargs: yargs.Argv) =>
+        deploymentMetrics("metrics", yargs)
+      )
+      .command("m", "Display the daily metrics history for a deployment", (yargs: yargs.Argv) => deploymentMetrics("m", yargs))
       .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
 
     addCommonConfiguration(yargs);
@@ -1344,6 +1387,25 @@ export function createCommand(): cli.ICommand {
               deploymentHistoryCommand.deploymentName = arg3;
               deploymentHistoryCommand.format = argv["format"] as any;
               deploymentHistoryCommand.displayAuthor = argv["displayAuthor"] as any;
+            }
+            break;
+
+          case "metrics":
+          case "m":
+            if (arg2 && arg3) {
+              cmd = { type: cli.CommandType.deploymentMetrics };
+
+              const deploymentMetricsCommand = <cli.IDeploymentMetricsCommand>cmd;
+
+              deploymentMetricsCommand.appName = arg2;
+              deploymentMetricsCommand.deploymentName = arg3;
+              deploymentMetricsCommand.format = argv["format"] as any;
+              if (argv["from"]) {
+                deploymentMetricsCommand.from = argv["from"] as any;
+              }
+              if (argv["to"]) {
+                deploymentMetricsCommand.to = argv["to"] as any;
+              }
             }
             break;
         }

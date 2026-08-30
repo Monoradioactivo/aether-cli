@@ -151,6 +151,14 @@ export interface IDeploymentHistoryCommand extends ICommand {
   displayAuthor: boolean;
 }
 
+export interface IDeploymentMetricsCommand extends ICommand {
+  appName: string;
+  deploymentName: string;
+  format: string;
+  from?: string;
+  to?: string;
+}
+
 export interface IDeploymentListCommand extends ICommand {
   appName: string;
   format: string;
