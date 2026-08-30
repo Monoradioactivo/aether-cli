@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.6.0...v0.6.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **cli:** drop the retired package diffing types ([#108](https://github.com/Monoradioactivo/aether-cli/issues/108)) ([719e3a2](https://github.com/Monoradioactivo/aether-cli/commit/719e3a27d617bbf6349bb86bbbd733ba304d4476))
+
 ## [0.6.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.5.2...v0.6.0) (2026-08-27)
 
 
