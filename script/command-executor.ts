@@ -32,6 +32,7 @@ import {
   CollaboratorProperties,
   Deployment,
   DeploymentMetrics,
+  DeploymentMetricsHistory,
   Package,
   PackageInfo,
   Session,
@@ -522,6 +523,16 @@ function deploymentHistory(command: cli.IDeploymentHistoryCommand): Promise<void
   });
 }
 
+function deploymentMetrics(command: cli.IDeploymentMetricsCommand): Promise<void> {
+  throwForInvalidOutputFormat(command.format);
+
+  return sdk
+    .getDeploymentMetricsHistory(command.appName, command.deploymentName, command.from, command.to)
+    .then((history: DeploymentMetricsHistory): void => {
+      printDeploymentMetricsHistory(command, history);
+    });
+}
+
 function deserializeConnectionInfo(): ILoginConnectionInfo {
   let stored: keyStore.StoredCredential | null;
   try {
@@ -674,6 +685,9 @@ export function execute(command: cli.ICommand) {
 
       case cli.CommandType.deploymentList:
         return deploymentList(<cli.IDeploymentListCommand>command);
+
+      case cli.CommandType.deploymentMetrics:
+        return deploymentMetrics(<cli.IDeploymentMetricsCommand>command);
 
       case cli.CommandType.deploymentRemove:
         return deploymentRemove(<cli.IDeploymentRemoveCommand>command);
@@ -1019,6 +1033,76 @@ function printDeploymentHistory(command: cli.IDeploymentHistoryCommand, deployme
       });
     });
   }
+}
+
+function getDayMetricCell(value: number, delta: number | null): string {
+  const base = value.toLocaleString();
+  if (delta === null || delta === undefined) {
+    return base;
+  }
+
+  return `${base} (+${delta.toLocaleString()})`;
+}
+
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+function getDisplayLabel(label: string): string {
+  const stripped = String(label).replace(CONTROL_CHARACTERS, "");
+  return stripped || "(unnamed)";
+}
+
+function compareLabels(a: string, b: string): number {
+  const aOrder = /^v(\d+)$/.exec(a);
+  const bOrder = /^v(\d+)$/.exec(b);
+  if (aOrder && bOrder) {
+    return parseInt(aOrder[1], 10) - parseInt(bOrder[1], 10);
+  }
+  if (aOrder) return -1;
+  if (bOrder) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function printDeploymentMetricsHistory(command: cli.IDeploymentMetricsCommand, history: DeploymentMetricsHistory): void {
+  if (command.format === "json") {
+    printJson(history);
+    return;
+  }
+
+  if (command.format !== "table") {
+    return;
+  }
+
+  log(chalk.green("Range: ") + history.from + " to " + history.to + " (UTC)");
+  if (history.historyStartsAt && history.historyStartsAt > history.from) {
+    log(chalk.green("History starts at: ") + history.historyStartsAt);
+  }
+
+  const days = history.days || [];
+  const hasRows = days.some((day) => Object.keys(day.labels || {}).length > 0);
+  if (!hasRows) {
+    log(chalk.magenta("No daily metrics recorded in this range").toString());
+    return;
+  }
+
+  const headers = ["Date", "Label", "Active", "Downloaded", "Installed", "Failed"];
+  printTable(headers, (dataSource: any[]): void => {
+    days.forEach((day): void => {
+      const labels = day.labels || {};
+      Object.keys(labels)
+        .sort(compareLabels)
+        .forEach((label: string): void => {
+          const metrics = labels[label];
+          dataSource.push([
+            day.date,
+            getDisplayLabel(label),
+            metrics.active.toLocaleString(),
+            getDayMetricCell(metrics.downloaded, metrics.downloadedDelta),
+            getDayMetricCell(metrics.installed, metrics.installedDelta),
+            getDayMetricCell(metrics.failed, metrics.failedDelta),
+          ]);
+        });
+    });
+  });
 }
 
 function applyChalkSkippingLineBreaks(applyString: string, chalkMethod: (string: string) => any): string {

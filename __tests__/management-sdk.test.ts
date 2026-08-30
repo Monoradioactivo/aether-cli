@@ -408,6 +408,66 @@ describe("management-sdk / AccountManager", () => {
       const result = await sdk.getDeploymentHistory("my-app", "Production");
       expect(result).toEqual([{ label: "v1" }, { label: "v2" }]);
     });
+
+    it("getDeploymentMetricsHistory without dates sends no query string", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, { from: "2026-08-01", to: "2026-08-30", historyStartsAt: null, days: [] }));
+      await sdk.getDeploymentMetricsHistory("my-app", "Production");
+      const { url } = lastFetchCall(fetchSpy);
+      expect(url).toBe(`${TEST_SERVER}/v1/apps/my-app/deployments/Production/metrics/history`);
+    });
+
+    it("getDeploymentMetricsHistory forwards from and to as query parameters", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, { from: "2026-08-01", to: "2026-08-15", historyStartsAt: null, days: [] }));
+      await sdk.getDeploymentMetricsHistory("my-app", "Production", "2026-08-01", "2026-08-15");
+      const { url } = lastFetchCall(fetchSpy);
+      expect(url).toBe(`${TEST_SERVER}/v1/apps/my-app/deployments/Production/metrics/history?from=2026-08-01&to=2026-08-15`);
+    });
+
+    it("getDeploymentMetricsHistory sends only the date that was supplied", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, { from: "2026-08-01", to: "2026-08-30", historyStartsAt: null, days: [] }));
+      await sdk.getDeploymentMetricsHistory("my-app", "Production", "2026-08-01");
+      const { url } = lastFetchCall(fetchSpy);
+      expect(url).toBe(`${TEST_SERVER}/v1/apps/my-app/deployments/Production/metrics/history?from=2026-08-01`);
+    });
+
+    it("getDeploymentMetricsHistory encodes user-supplied dates instead of pasting them into the query", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, { from: "2026-08-01", to: "2026-08-30", historyStartsAt: null, days: [] }));
+      await sdk.getDeploymentMetricsHistory("my-app", "Production", "2026-08-01&to=1999-01-01");
+      const { url } = lastFetchCall(fetchSpy);
+      expect(url).toBe(`${TEST_SERVER}/v1/apps/my-app/deployments/Production/metrics/history?from=2026-08-01%26to%3D1999-01-01`);
+    });
+
+    it("getDeploymentMetricsHistory returns the bare body rather than unwrapping a key", async () => {
+      const sdk = newSdk();
+      const payload = {
+        from: "2026-08-20",
+        to: "2026-08-21",
+        historyStartsAt: "2026-08-20",
+        days: [
+          {
+            date: "2026-08-20",
+            labels: {
+              v1: {
+                active: 10,
+                downloaded: 20,
+                installed: 18,
+                failed: 2,
+                downloadedDelta: null,
+                installedDelta: null,
+                failedDelta: null,
+              },
+            },
+          },
+        ],
+      };
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, payload));
+      const result = await sdk.getDeploymentMetricsHistory("my-app", "Production");
+      expect(result).toEqual(payload);
+    });
   });
 
   describe("releases", () => {

@@ -17,6 +17,7 @@ import {
   CustomHeaders,
   Deployment,
   DeploymentMetrics,
+  DeploymentMetricsHistory,
   Package,
   PackageInfo,
   Session,
@@ -220,6 +221,21 @@ class AccountManager {
   public async getDeploymentMetrics(appName: string, deploymentName: string): Promise<DeploymentMetrics> {
     const res = await this.request("GET", urlEncode`/v1/apps/${appName}/deployments/${deploymentName}/metrics`, undefined, true);
     return res.body.metrics;
+  }
+
+  public async getDeploymentMetricsHistory(
+    appName: string,
+    deploymentName: string,
+    from?: string,
+    to?: string
+  ): Promise<DeploymentMetricsHistory> {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const query = params.toString();
+    const endpoint = urlEncode`/v1/apps/${appName}/deployments/${deploymentName}/metrics/history`;
+    const res = await this.request("GET", query ? `${endpoint}?${query}` : endpoint, undefined, true);
+    return res.body;
   }
 
   public async getDeploymentHistory(appName: string, deploymentName: string): Promise<Package[]> {
