@@ -92,7 +92,7 @@ export const confirm = (message: string = "Are you sure?", autoConfirm: boolean 
   }
 
   message += " (y/N):";
-  return new Promise<boolean>((resolve, reject): void => {
+  return new Promise<boolean>((resolve, _reject): void => {
     prompt.message = "";
     prompt.delimiter = "";
 
@@ -805,7 +805,7 @@ async function login(command: cli.ILoginCommand): Promise<void> {
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ email, password }),
     });
-  } catch (err) {
+  } catch (_err) {
     throw new Error(`Unable to reach Aether at ${serverUrl}. Are you offline, or behind a firewall or proxy?`);
   }
 
@@ -872,7 +872,7 @@ async function isStoredCredentialUsable(serverUrl: string): Promise<boolean> {
   }
 }
 
-async function logout(command: cli.ICommand): Promise<void> {
+async function logout(_command: cli.ICommand): Promise<void> {
   const current = connectionInfo;
 
   if (current && current.credentialId) {
@@ -927,7 +927,7 @@ function printAppList(format: string, apps: App[]): void {
   } else if (format === "table") {
     const headers = ["Name", "Deployments"];
     printTable(headers, (dataSource: any[]): void => {
-      apps.forEach((app: App, index: number): void => {
+      apps.forEach((app: App, _index: number): void => {
         const row = [app.name, wordwrap(50)(app.deployments.join(", "))];
         dataSource.push(row);
       });
@@ -1232,7 +1232,7 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
 
     try {
       parsedPlist = plist.parse(plistContents);
-    } catch (e) {
+    } catch (_e) {
       throw new Error(`Unable to parse "${resolvedPlistFile}". Please ensure it is a well-formed plist file.`);
     }
 
@@ -1337,7 +1337,7 @@ function getReactNativeProjectAppVersion(command: cli.IReleaseReactCommand, proj
               if (appVersion) {
                 break;
               }
-            } catch (e) {
+            } catch (_e) {
               throw new Error(`Unable to parse "${propertiesFile}". Please ensure it is a well-formed properties file.`);
             }
           }
@@ -1514,7 +1514,7 @@ async function register(command: cli.IRegisterCommand): Promise<void> {
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(reqBody),
     });
-  } catch (err) {
+  } catch (_err) {
     throw new Error(`Unable to reach Aether at ${serverUrl}. Are you offline, or behind a firewall or proxy?`);
   }
 
@@ -1624,7 +1624,7 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
 
   return sdk
     .isAuthenticated(true)
-    .then(async (isAuth: boolean) => {
+    .then(async (_isAuth: boolean) => {
       if (command.privateKeyPath) {
         throwForInvalidSignedReleaseFolder(filePath, isSingleFilePackage);
         progressLog(command, chalk.cyan("\nSigning the release contents:\n"));
@@ -1692,7 +1692,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
           if (!projectPackageJson.dependencies["react-native"]) {
             throw new Error("The project in the CWD is not a React Native project.");
           }
-        } catch (error) {
+        } catch (_error) {
           throw new Error(
             'Unable to find or read "package.json" in the CWD. The "release-react" command must be executed in a React Native project folder.'
           );
@@ -2000,7 +2000,7 @@ function throwForInvalidOutputFormat(format: string): void {
   }
 }
 
-function whoami(command: cli.ICommand): Promise<void> {
+function whoami(_command: cli.ICommand): Promise<void> {
   return sdk.getAccountInfo().then((account): void => {
     log(account.email);
   });

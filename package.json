@@ -11,8 +11,8 @@
     "clean": "rimraf bin",
     "typecheck": "tsc --noEmit",
     "prettier": "prettier --write \"./**/*.ts\"",
-    "lint": "npx eslint ./script/**/*.ts",
-    "lint:fix": "npx eslint ./script/**/*.ts --fix",
+    "lint": "npx eslint \"./script/**/*.ts\"",
+    "lint:fix": "npx eslint \"./script/**/*.ts\" --fix",
     "test": "jest",
     "pins:check": "node scripts/check-version-pins.mjs"
   },

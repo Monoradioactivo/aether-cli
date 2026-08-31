@@ -16,7 +16,7 @@ import * as stream from "stream";
 let yauzl;
 try {
   yauzl = require("yauzl");
-} catch (e) {}
+} catch (_e) {}
 
 const HASH_ALGORITHM = "sha256";
 
@@ -187,7 +187,7 @@ export class PackageManifest {
       }
 
       return new PackageManifest(map);
-    } catch (e) {}
+    } catch (_e) {}
   }
 
   public static normalizePath(filePath: string): string {

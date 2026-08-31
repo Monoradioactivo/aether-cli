@@ -224,7 +224,7 @@ async function getHermesCommand(gradleFile: string): Promise<string> {
   const fileExists = (file: string): boolean => {
     try {
       return fs.statSync(file).isFile();
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   };
@@ -298,7 +298,7 @@ export function getReactNativeVersion(): string {
   try {
     packageJsonFilename = path.join(process.cwd(), "package.json");
     projectPackageJson = JSON.parse(fs.readFileSync(packageJsonFilename, "utf-8"));
-  } catch (error) {
+  } catch (_error) {
     throw new Error(
       `Unable to find or read "package.json" in the CWD. The "release-react" command must be executed in a React Native project folder.`
     );
