@@ -1534,13 +1534,22 @@ async function register(command: cli.IRegisterCommand): Promise<void> {
 
   const body: any = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const retryAfterSeconds = readRetryAfterSeconds(body);
     if (Array.isArray(body.errors) && body.errors.length > 0) {
-      const lines = body.errors
-        .map((e: any) => (e && typeof e === "object" ? e.message || JSON.stringify(e) : String(e)))
-        .join("\n  ");
-      throw new Error(`Registration failed:\n  ${lines}`);
+      const validationErrors = readValidationErrors(body);
+      const lines = validationErrors
+        ? validationErrors.map((entry) => `${entry.field}: ${entry.message}`).join("\n  ")
+        : body.errors
+            .map((e: any) => (e && typeof e === "object" ? e.message || JSON.stringify(e) : String(e)))
+            .join("\n  ");
+      throw new Error(messageWithRetryAfterSeconds(`Registration failed:\n  ${lines}`, retryAfterSeconds));
     }
-    throw new Error(body.error || body.message || `Registration failed (HTTP ${res.status}).`);
+    throw new Error(
+      messageWithRetryAfterSeconds(
+        body.error || body.message || `Registration failed (HTTP ${res.status}).`,
+        retryAfterSeconds
+      )
+    );
   }
 
   log(chalk.green(`Account created for ${email}.`));
