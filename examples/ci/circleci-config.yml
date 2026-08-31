@@ -22,7 +22,7 @@ jobs:
         default: "android"
       cli-version:
         type: string
-        default: "0.7.3"
+        default: "0.7.4"
     steps:
       - checkout
       - run:
