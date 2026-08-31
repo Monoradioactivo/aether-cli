@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.4](https://github.com/Monoradioactivo/aether-cli/compare/v0.7.3...v0.7.4) (2026-08-31)
+
+
+### Bug Fixes
+
+* **cli:** print register error fields and retry wait ([#124](https://github.com/Monoradioactivo/aether-cli/issues/124)) ([0198823](https://github.com/Monoradioactivo/aether-cli/commit/0198823c90518efc058a975c695e3f93dc797767))
+
 ## [0.7.3](https://github.com/Monoradioactivo/aether-cli/compare/v0.7.2...v0.7.3) (2026-08-31)
 
 
