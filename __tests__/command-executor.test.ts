@@ -70,13 +70,17 @@ jest.mock("prompt", () => ({
   get: (...args: any[]) => mockPromptGet(...args),
 }));
 
+import { spawn } from "child_process";
+import { EventEmitter } from "events";
 import * as crypto from "crypto";
 import * as fs from "fs";
+import * as jwt from "jsonwebtoken";
 import * as os from "os";
 import * as path from "path";
 import * as cli from "../script/types/cli";
 import * as executorMod from "../script/command-executor";
 import { AetherError } from "../script/errors";
+import * as hashUtils from "../script/hash-utils";
 import { CI_ENVIRONMENT_VARIABLES_TO_SCRUB } from "./fixtures/ci-environment";
 
 const executor: any = executorMod;
@@ -1735,6 +1739,180 @@ describe("command-executor", () => {
         }
       });
       expect(jsonLines.length).toBe(0);
+    });
+  });
+
+  describe("releaseReact", () => {
+    const pkg = {
+      label: "v3",
+      packageHash: "abc123hash",
+      size: 4242,
+      appVersion: "1.0.0",
+      blobUrl: "https://cdn.example.com/blob/v3",
+      description: "first release",
+      releasedBy: "adrian@aetherpush.com",
+      releaseMethod: "Upload",
+      uploadTime: 1714867200000,
+      rollout: 100,
+      isMandatory: false,
+      isDisabled: false,
+    };
+
+    function mockBundleSpawn(): void {
+      (spawn as jest.Mock).mockImplementation((_cmd: string, args: string[]) => {
+        const bundlePath = args[args.indexOf("--bundle-output") + 1];
+        fs.mkdirSync(path.dirname(bundlePath), { recursive: true });
+        fs.writeFileSync(bundlePath, "console.log('test-bundle')");
+        const proc = new EventEmitter() as any;
+        proc.stdout = new EventEmitter();
+        proc.stderr = new EventEmitter();
+        process.nextTick(() => proc.emit("close", 0));
+        return proc;
+      });
+    }
+
+    function writeReactNativeCwd(cwd: string): void {
+      fs.writeFileSync(
+        path.join(cwd, "package.json"),
+        JSON.stringify({ name: "TestApp", dependencies: { "react-native": "0.19.0" } })
+      );
+      fs.writeFileSync(path.join(cwd, "index.android.js"), "console.log('test');");
+      fs.mkdirSync(path.join(cwd, "android", "app"), { recursive: true });
+      fs.writeFileSync(path.join(cwd, "android", "app", "build.gradle"), "project.ext.react = [\n  enableHermes: false\n]\n");
+    }
+
+    beforeEach(() => {
+      executor.sdk = mockSdkMethods;
+      mkdirSyncSpy.mockRestore();
+      writeFileSyncSpy.mockRestore();
+      readFileSyncSpy.mockRestore();
+      unlinkSyncSpy.mockRestore();
+      jest.spyOn(fs, "openSync").mockRestore();
+      jest.spyOn(fs, "closeSync").mockRestore();
+      jest.spyOn(fs, "fchmodSync").mockRestore();
+      jest.spyOn(fs, "chmodSync").mockRestore();
+    });
+
+    it("with --json --privateKeyPath signs once and uploads a verifiable JWT", async () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "aether-rr-test-"));
+      const previousCwd = process.cwd();
+      const signModule = require("../script/sign");
+      const signSpy = jest.spyOn(signModule, "default");
+      writeReactNativeCwd(cwd);
+      const outputDir = path.join(cwd, "CodePush");
+      const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      });
+      const privateKeyPath = path.join(cwd, "private-key.pem");
+      fs.writeFileSync(privateKeyPath, privateKey);
+      process.chdir(cwd);
+      mockBundleSpawn();
+      mockSdkMethods.getDeployment.mockResolvedValue({ name: "Production" });
+      mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+      mockSdkMethods.release.mockResolvedValue(pkg);
+
+      try {
+        await executor.releaseReact({
+          type: cli.CommandType.releaseReact,
+          appName: "MyApp",
+          deploymentName: "Production",
+          platform: "android",
+          appStoreVersion: "1.0.0",
+          privateKeyPath,
+          outputDir,
+          json: true,
+          description: "first release",
+          disabled: false,
+          mandatory: false,
+          rollout: 100,
+          noDuplicateReleaseError: false,
+        });
+
+        expect(signSpy).toHaveBeenCalledTimes(1);
+        expect(mockSdkMethods.release).toHaveBeenCalledTimes(1);
+        const uploadedPath = mockSdkMethods.release.mock.calls[0][2];
+        expect(path.basename(uploadedPath)).toBe("CodePush");
+        const sigPath = path.join(uploadedPath, ".codepushrelease");
+        expect(fs.existsSync(sigPath)).toBe(true);
+        const token = fs.readFileSync(sigPath, "utf8");
+        const decoded = jwt.verify(token, publicKey, { algorithms: ["RS256"] }) as { contentHash: string };
+        fs.unlinkSync(sigPath);
+        const recomputed = await hashUtils.generatePackageHashFromDirectory(uploadedPath, path.join(uploadedPath, ".."));
+        expect(decoded.contentHash).toBe(recomputed);
+
+        const stdoutMessages = consoleLogSpy.mock.calls.map((c) => String(c[0]));
+        expect(stdoutMessages).toHaveLength(1);
+        expect(JSON.parse(stdoutMessages[0])).toEqual({
+          label: "v3",
+          packageHash: "abc123hash",
+          size: 4242,
+          appVersion: "1.0.0",
+          blobUrl: "https://cdn.example.com/blob/v3",
+          description: "first release",
+          releasedBy: "adrian@aetherpush.com",
+          releaseMethod: "Upload",
+          uploadTime: 1714867200000,
+          rollout: 100,
+          isMandatory: false,
+          isDisabled: false,
+        });
+        expect(stdoutMessages[0].includes("\n")).toBe(false);
+        const stderrMessages = consoleErrorSpy.mock.calls.map((c) => String(c[0]));
+        expect(stderrMessages.some((m) => m.includes("Generated a release signature"))).toBe(true);
+        expect(stderrMessages.some((m) => m.includes("Deleting previous release signature"))).toBe(false);
+        expect(stderrMessages.some((m) => m.includes("Signing the release contents"))).toBe(false);
+        expect(stderrMessages.some((m) => m.includes("Signing the bundle"))).toBe(true);
+      } finally {
+        process.chdir(previousCwd);
+        signSpy.mockRestore();
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it("with --json and no --privateKeyPath leaves sign() uncalled and prints one JSON line", async () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "aether-rr-unsigned-"));
+      const previousCwd = process.cwd();
+      const signModule = require("../script/sign");
+      const signSpy = jest.spyOn(signModule, "default");
+      writeReactNativeCwd(cwd);
+      const outputDir = path.join(cwd, "CodePush");
+      process.chdir(cwd);
+      mockBundleSpawn();
+      mockSdkMethods.getDeployment.mockResolvedValue({ name: "Production" });
+      mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+      mockSdkMethods.release.mockResolvedValue(pkg);
+
+      try {
+        await executor.releaseReact({
+          type: cli.CommandType.releaseReact,
+          appName: "MyApp",
+          deploymentName: "Production",
+          platform: "android",
+          appStoreVersion: "1.0.0",
+          privateKeyPath: null,
+          outputDir,
+          json: true,
+          description: "first release",
+          disabled: false,
+          mandatory: false,
+          rollout: 100,
+          noDuplicateReleaseError: false,
+        });
+
+        expect(signSpy).not.toHaveBeenCalled();
+        const stdoutMessages = consoleLogSpy.mock.calls.map((c) => String(c[0]));
+        expect(stdoutMessages).toHaveLength(1);
+        expect(JSON.parse(stdoutMessages[0]).label).toBe("v3");
+        const stderrMessages = consoleErrorSpy.mock.calls.map((c) => String(c[0]));
+        expect(stderrMessages.some((m) => m.includes("private key was not provided"))).toBe(true);
+        expect(fs.existsSync(path.join(outputDir, ".codepushrelease"))).toBe(false);
+      } finally {
+        process.chdir(previousCwd);
+        signSpy.mockRestore();
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
     });
   });
 

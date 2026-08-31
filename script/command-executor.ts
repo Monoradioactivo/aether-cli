@@ -1786,7 +1786,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
       })
       .then(() => {
         progressLog(command, chalk.cyan("\nReleasing update contents to Aether:\n"));
-        return release(releaseCommand);
+        return release({ ...releaseCommand, privateKeyPath: undefined });
       })
       .then(() => {
         if (!command.outputDir) {
