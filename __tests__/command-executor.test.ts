@@ -1393,12 +1393,111 @@ describe("command-executor", () => {
           { status: 400 }
         )
       );
-      await expect(
-        executor.execute({
+      try {
+        await executor.execute({
           type: cli.CommandType.register,
           serverUrl: "https://api.aetherpush.com",
+        });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Registration failed:\n  password: Password too short\n  password: Password must contain a digit");
+      }
+    });
+
+    it("register prints field names from a validation 400", async () => {
+      setRegisterCredentials("new@example.com", "Password123!Strong", "Password123!Strong", "TooLong");
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: "Validation failed.",
+            errors: [{ field: "name", message: "Field is invalid" }],
+          }),
+          { status: 400 }
+        )
+      );
+      try {
+        await executor.execute({
+          type: cli.CommandType.register,
+          serverUrl: "https://api.aetherpush.com",
+        });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Registration failed:\n  name: Field is invalid");
+      }
+    });
+
+    it("register keeps message-only password-strength lines without inventing a field", async () => {
+      setRegisterCredentials("new@example.com", "weakpassword1", "weakpassword1", "");
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify({ errors: [{ message: "Password must be at least 12 characters long." }] }), {
+          status: 400,
         })
-      ).rejects.toThrow(/Password too short[\s\S]*Password must contain a digit/);
+      );
+      try {
+        await executor.execute({
+          type: cli.CommandType.register,
+          serverUrl: "https://api.aetherpush.com",
+        });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Registration failed:\n  Password must be at least 12 characters long.");
+      }
+    });
+
+    it("register prints retryAfterSeconds from a 429 body", async () => {
+      setRegisterCredentials("new@example.com", "Password123!Strong", "Password123!Strong", "Alice");
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: "Too many registration attempts. Please try again later.",
+            retryAfterSeconds: 900,
+          }),
+          { status: 429 }
+        )
+      );
+      try {
+        await executor.execute({
+          type: cli.CommandType.register,
+          serverUrl: "https://api.aetherpush.com",
+        });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe(
+          "Too many registration attempts. Please try again later. Retry after 900 seconds."
+        );
+      }
+    });
+
+    it("register leaves a 429 without retryAfterSeconds unchanged", async () => {
+      setRegisterCredentials("new@example.com", "Password123!Strong", "Password123!Strong", "Alice");
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Too many registration attempts. Please try again later." }), {
+          status: 429,
+        })
+      );
+      try {
+        await executor.execute({
+          type: cli.CommandType.register,
+          serverUrl: "https://api.aetherpush.com",
+        });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Too many registration attempts. Please try again later.");
+      }
+    });
+
+    it("register surfaces a 400 without errors as the server error string", async () => {
+      setRegisterCredentials("new@example.com", "Password123!Strong", "Password123!Strong", "Alice");
+      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ error: "Email and password are required." }), { status: 400 }));
+      try {
+        await executor.execute({
+          type: cli.CommandType.register,
+          serverUrl: "https://api.aetherpush.com",
+        });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Email and password are required.");
+      }
     });
 
     it("logout deletes session file and nulls sdk", async () => {
