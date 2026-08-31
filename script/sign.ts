@@ -28,7 +28,7 @@ export default async function sign(
 
   try {
     privateKey = await fs.readFile(privateKeyPath);
-  } catch (err) {
+  } catch (_err) {
     return Promise.reject(new Error(`The path specified for the signing key ("${privateKeyPath}") was not valid.`));
   }
 

@@ -10,15 +10,12 @@ const packageJson = require("../../package.json");
 const ROLLOUT_PERCENTAGE_REGEX: RegExp = /^(100|[1-9][0-9]|[1-9])%?$/;
 const USAGE_PREFIX = "Usage: aether";
 
-// Command categories are:  access-key, app, release, deployment, deployment-key, login, logout, register
-let isValidCommandCategory = false;
 // Commands are the verb following the command category (e.g.:  "add" in "app add").
 let isValidCommand = false;
 let wasHelpShown = false;
 export let parseFailed = false;
 
 export function resetParserState(): void {
-  isValidCommandCategory = false;
   isValidCommand = false;
   wasHelpShown = false;
   parseFailed = false;
@@ -229,7 +226,7 @@ function addCommonConfiguration(yargs: yargs.Argv): void {
         "Auto-enrich release/promote/patch descriptions with CI metadata when running in a supported CI provider. Pass --no-ci-metadata to opt out.",
       type: "boolean",
     })
-    .fail((msg: string) => {
+    .fail((_msg: string) => {
       parseFailed = true;
       showHelp();
     }); // Suppress the default error message.
@@ -435,7 +432,6 @@ yargs
   .usage(USAGE_PREFIX + " <command>")
   .demand(/*count*/ 1, /*max*/ 1) // Require exactly one non-option argument.
   .command("access-key", "View and manage the access keys associated with your account", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     yargs
       .usage(USAGE_PREFIX + " access-key <command>")
       .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments.
@@ -449,12 +445,11 @@ yargs
       .command("rm", "Remove an existing access key", (yargs: yargs.Argv) => accessKeyRemove("rm", yargs))
       .command("list", "List the access keys associated with your account", (yargs: yargs.Argv) => accessKeyList("list", yargs))
       .command("ls", "List the access keys associated with your account", (yargs: yargs.Argv) => accessKeyList("ls", yargs))
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
 
     addCommonConfiguration(yargs);
   })
   .command("api-key", "View and manage the API keys associated with your tenant (for CI/CD)", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     yargs
       .usage(USAGE_PREFIX + " api-key <command>")
       .demand(/*count*/ 2, /*max*/ 2)
@@ -470,12 +465,11 @@ yargs
       .command("ls", "List the API keys associated with your tenant", (yargs: yargs.Argv) => apiKeyList("ls", yargs))
       .command("remove", "Revoke an existing API key", (yargs: yargs.Argv) => apiKeyRemove("remove", yargs))
       .command("rm", "Revoke an existing API key", (yargs: yargs.Argv) => apiKeyRemove("rm", yargs))
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand);
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand);
 
     addCommonConfiguration(yargs);
   })
   .command("app", "View and manage your apps", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     yargs
       .usage(USAGE_PREFIX + " app <command>")
       .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments.
@@ -510,12 +504,11 @@ yargs
 
         addCommonConfiguration(yargs);
       })
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
 
     addCommonConfiguration(yargs);
   })
   .command("collaborator", "View and manage app collaborators", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     yargs
       .usage(USAGE_PREFIX + " collaborator <command>")
       .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments.
@@ -532,12 +525,11 @@ yargs
       .command("rm", "Remove a collaborator from an app", (yargs: yargs.Argv) => removeCollaborator("rm", yargs))
       .command("list", "List the collaborators for an app", (yargs: yargs.Argv) => listCollaborators("list", yargs))
       .command("ls", "List the collaborators for an app", (yargs: yargs.Argv) => listCollaborators("ls", yargs))
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
 
     addCommonConfiguration(yargs);
   })
   .command("debug", "View the Aether debug logs for a running app", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     isValidCommand = true;
     yargs
       .usage(USAGE_PREFIX + " debug <platform>")
@@ -548,7 +540,6 @@ yargs
     addCommonConfiguration(yargs);
   })
   .command("deployment", "View and manage your app deployments", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     yargs
       .usage(USAGE_PREFIX + " deployment <command>")
       .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments.
@@ -593,12 +584,11 @@ yargs
         deploymentMetrics("metrics", yargs)
       )
       .command("m", "Display the daily metrics history for a deployment", (yargs: yargs.Argv) => deploymentMetrics("m", yargs))
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
 
     addCommonConfiguration(yargs);
   })
   .command("login", "Authenticate with the Aether server to begin managing your apps", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     isValidCommand = true;
     yargs
       .usage(USAGE_PREFIX + " login [options]")
@@ -631,12 +621,11 @@ yargs
         description: "Override the default Aether server URL (advanced)",
         type: "string",
       })
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand);
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand);
 
     addCommonConfiguration(yargs);
   })
   .command("logout", "Log out of the current session", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     isValidCommand = true;
     yargs
       .usage(USAGE_PREFIX + " logout")
@@ -699,7 +688,7 @@ yargs
         description: "Semver expression that specifies the binary app version(s) this release is targeting (e.g. 1.1.0, ~1.2.3).",
         type: "string",
       })
-      .check((argv: any, aliases: { [aliases: string]: string }): any => {
+      .check((argv: any, _aliases: { [aliases: string]: string }): any => {
         return isValidRollout(argv);
       });
 
@@ -770,14 +759,13 @@ yargs
           "Semver expression that specifies the binary app version(s) this release is targeting (e.g. 1.1.0, ~1.2.3). If omitted, the target binary version property from the release being promoted will be used.",
         type: "string",
       })
-      .check((argv: any, aliases: { [aliases: string]: string }): any => {
+      .check((argv: any, _aliases: { [aliases: string]: string }): any => {
         return isValidRollout(argv);
       });
 
     addCommonConfiguration(yargs);
   })
   .command("register", "Register a new Aether account", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     isValidCommand = true;
     yargs
       .usage(USAGE_PREFIX + " register")
@@ -789,7 +777,7 @@ yargs
         description: "Override the default Aether server URL (advanced)",
         type: "string",
       })
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand);
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand);
 
     addCommonConfiguration(yargs);
   })
@@ -864,7 +852,7 @@ yargs
           "Emit a JSON object describing the released package as the last line of stdout. Progress messages route to stderr.",
         type: "boolean",
       })
-      .check((argv: any, aliases: { [aliases: string]: string }): any => {
+      .check((argv: any, _aliases: { [aliases: string]: string }): any => {
         return checkValidReleaseOptions(argv);
       });
 
@@ -1046,7 +1034,7 @@ yargs
           "Emit a JSON object describing the released package as the last line of stdout. Progress messages route to stderr.",
         type: "boolean",
       })
-      .check((argv: any, aliases: { [aliases: string]: string }): any => {
+      .check((argv: any, _aliases: { [aliases: string]: string }): any => {
         return checkValidReleaseOptions(argv);
       });
 
@@ -1073,7 +1061,6 @@ yargs
     addCommonConfiguration(yargs);
   })
   .command("session", "View and manage the current login sessions associated with your account", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     yargs
       .usage(USAGE_PREFIX + " session <command>")
       .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments.
@@ -1083,12 +1070,11 @@ yargs
         sessionList("list", yargs)
       )
       .command("ls", "List the current login sessions associated with your account", (yargs: yargs.Argv) => sessionList("ls", yargs))
-      .check((argv: any, aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
 
     addCommonConfiguration(yargs);
   })
   .command("whoami", "Display the account info for the current login session", (yargs: yargs.Argv) => {
-    isValidCommandCategory = true;
     isValidCommand = true;
     yargs
       .usage(USAGE_PREFIX + " whoami")
@@ -1099,7 +1085,7 @@ yargs
   .alias("v", "version")
   .version(packageJson.version)
   .wrap(/*columnLimit*/ null)
-  .fail((msg: string) => {
+  .fail((_msg: string) => {
     parseFailed = true;
     showHelp(/*showRootDescription*/ true);
   }).argv; // Suppress the default error message.
