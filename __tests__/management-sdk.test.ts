@@ -778,6 +778,191 @@ describe("management-sdk / AccountManager", () => {
       }
     });
 
+    it("names validation errors from a 400 body in the thrown message", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(400, {
+          error: "Validation failed.",
+          errors: [{ field: "email", message: "Email format is invalid." }],
+        })
+      );
+      try {
+        await sdk.addApp("x");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(AetherError);
+        expect(err.statusCode).toBe(400);
+        expect(err.message).toBe("Validation failed. email: Email format is invalid.");
+        expect(err.errors).toBeUndefined();
+      }
+    });
+
+    it("joins several validation errors with a space", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(400, {
+          error: "Validation failed.",
+          errors: [
+            { field: "email", message: "Email format is invalid." },
+            { field: "password", message: "Password too short." },
+          ],
+        })
+      );
+      try {
+        await sdk.addApp("x");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe(
+          "Validation failed. email: Email format is invalid. password: Password too short."
+        );
+      }
+    });
+
+    it("leaves the message unchanged when errors is absent", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(400, { error: "Malformed request." }));
+      try {
+        await sdk.addApp("x");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Malformed request.");
+      }
+    });
+
+    it("leaves a stringified validation array in error unchanged", async () => {
+      const sdk = newSdk();
+      const blob = JSON.stringify([{ field: "name", message: "Field is invalid" }]);
+      fetchSpy.mockResolvedValueOnce(jsonResponse(400, { error: blob }));
+      try {
+        await sdk.addApp("x");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe(blob);
+      }
+    });
+
+    it("ignores errors when it is empty or not an array of field/message pairs", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(400, { error: "Validation failed.", errors: [] }));
+      try {
+        await sdk.addApp("x");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Validation failed.");
+      }
+
+      fetchSpy.mockResolvedValueOnce(jsonResponse(400, { error: "Validation failed.", errors: "email" }));
+      try {
+        await sdk.addApp("x");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Validation failed.");
+      }
+
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(400, { error: "Validation failed.", errors: [{ message: "Email format is invalid." }] })
+      );
+      try {
+        await sdk.addApp("x");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Validation failed.");
+      }
+
+      fetchSpy.mockResolvedValueOnce(jsonResponse(400, { error: "Validation failed.", errors: [null] }));
+      try {
+        await sdk.addApp("x");
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Validation failed.");
+      }
+    });
+
+    it("prints retryAfterSeconds from a 429 body in the thrown message", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(429, {
+          error: "Too many login attempts. Please try again later.",
+          retryAfterSeconds: 900,
+        })
+      );
+      try {
+        await sdk.getAccountInfo();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(AetherError);
+        expect(err.statusCode).toBe(429);
+        expect(err.message).toBe(
+          "Too many login attempts. Please try again later. Retry after 900 seconds."
+        );
+        expect(err.retryAfterSeconds).toBeUndefined();
+      }
+    });
+
+    it("leaves a 429 without retryAfterSeconds unchanged", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(429, { error: "Too many requests" }));
+      try {
+        await sdk.getAccountInfo();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Too many requests");
+      }
+    });
+
+    it("does not invent retryAfterSeconds from a tenant 429 message or Retry-After header", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(
+          429,
+          {
+            error: "Rate limit exceeded",
+            message: "Tenant rate limit of 60 requests per minute exceeded. Retry after 42 seconds.",
+          },
+          { "Retry-After": "42" }
+        )
+      );
+      try {
+        await sdk.getAccountInfo();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Rate limit exceeded");
+      }
+    });
+
+    it("ignores retryAfterSeconds when it is not an integer of at least 1", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(429, { error: "Too many login attempts. Please try again later.", retryAfterSeconds: "900" })
+      );
+      try {
+        await sdk.getAccountInfo();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Too many login attempts. Please try again later.");
+      }
+
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(429, { error: "Too many login attempts. Please try again later.", retryAfterSeconds: 0 })
+      );
+      try {
+        await sdk.getAccountInfo();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Too many login attempts. Please try again later.");
+      }
+
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(429, { error: "Too many login attempts. Please try again later.", retryAfterSeconds: 1.5 })
+      );
+      try {
+        await sdk.getAccountInfo();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Too many login attempts. Please try again later.");
+      }
+    });
+
     it("leaves code undefined when the body has none", async () => {
       const sdk = newSdk();
       fetchSpy.mockResolvedValueOnce(jsonResponse(404, { error: "Not found" }));

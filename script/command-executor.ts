@@ -18,7 +18,13 @@ import wordwrap = require("wordwrap");
 import * as cli from "../script/types/cli";
 import sign from "./sign";
 const xcode = require("xcode");
-import { AetherError } from "./errors";
+import {
+  AetherError,
+  messageWithRetryAfterSeconds,
+  messageWithValidationErrors,
+  readRetryAfterSeconds,
+  readValidationErrors,
+} from "./errors";
 import {
   AccessKey,
   AccessKeyWithSecret,
@@ -813,7 +819,13 @@ async function login(command: cli.ILoginCommand): Promise<void> {
 
   const body: any = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || body.message || `Login failed (HTTP ${res.status}).`);
+    const message = body.error || body.message || `Login failed (HTTP ${res.status}).`;
+    throw new Error(
+      messageWithRetryAfterSeconds(
+        messageWithValidationErrors(message, readValidationErrors(body)),
+        readRetryAfterSeconds(body)
+      )
+    );
   }
 
   if (body.mfaRequired) {

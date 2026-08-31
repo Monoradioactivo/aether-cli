@@ -22,7 +22,13 @@ import {
   PackageInfo,
   Session,
 } from "./types";
-import { AetherError } from "./errors";
+import {
+  AetherError,
+  messageWithRetryAfterSeconds,
+  messageWithValidationErrors,
+  readRetryAfterSeconds,
+  readValidationErrors,
+} from "./errors";
 
 const packageJson = require("../../package.json");
 
@@ -420,13 +426,11 @@ class AccountManager {
     const message = (parsed && (parsed.error || parsed.message)) || text || res.statusText || "Request failed";
     const code: string | undefined = parsed && typeof parsed.code === "string" ? parsed.code : undefined;
     const requiredScopes = readRequiredScopes(parsed);
-    throw new AetherError(
-      messageWithRequiredScopes(message, requiredScopes),
-      res.status,
-      requestId,
-      code,
-      requiredScopes
+    const thrownMessage = messageWithRetryAfterSeconds(
+      messageWithValidationErrors(messageWithRequiredScopes(message, requiredScopes), readValidationErrors(parsed)),
+      readRetryAfterSeconds(parsed)
     );
+    throw new AetherError(thrownMessage, res.status, requestId, code, requiredScopes);
   }
 
   private headersToObject(h: Headers): Record<string, string> {

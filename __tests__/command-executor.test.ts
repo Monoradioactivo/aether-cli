@@ -1173,6 +1173,48 @@ describe("command-executor", () => {
       ).rejects.toThrow(/Invalid credentials/);
     });
 
+    it("login --password prints retryAfterSeconds from a 429 body", async () => {
+      setLoginCredentials("user@example.com", "wrong");
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: "Too many login attempts. Please try again later.",
+            retryAfterSeconds: 900,
+          }),
+          { status: 429 }
+        )
+      );
+      try {
+        await executor.execute({
+          type: cli.CommandType.login,
+          accessKey: null,
+          password: true,
+          serverUrl: "https://api.aetherpush.com",
+        });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Too many login attempts. Please try again later. Retry after 900 seconds.");
+      }
+    });
+
+    it("login --password leaves a 429 without retryAfterSeconds unchanged", async () => {
+      setLoginCredentials("user@example.com", "wrong");
+      fetchSpy.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Too many login attempts. Please try again later." }), { status: 429 })
+      );
+      try {
+        await executor.execute({
+          type: cli.CommandType.login,
+          accessKey: null,
+          password: true,
+          serverUrl: "https://api.aetherpush.com",
+        });
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Too many login attempts. Please try again later.");
+      }
+    });
+
     it("login --password rejects when fetch itself fails", async () => {
       setLoginCredentials("user@example.com", "password");
       fetchSpy.mockRejectedValueOnce(new TypeError("network down"));
