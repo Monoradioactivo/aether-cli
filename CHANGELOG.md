@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/Monoradioactivo/aether-cli/compare/v0.7.2...v0.7.3) (2026-08-31)
+
+
+### Bug Fixes
+
+* **cli:** sign release-react bundles once ([#121](https://github.com/Monoradioactivo/aether-cli/issues/121)) ([ac53368](https://github.com/Monoradioactivo/aether-cli/commit/ac53368c45cd1156d93edc4f84d4cf7065d7a7f8))
+
 ## [0.7.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.7.1...v0.7.2) (2026-08-31)
 
 
