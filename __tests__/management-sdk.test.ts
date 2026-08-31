@@ -699,6 +699,82 @@ describe("management-sdk / AccountManager", () => {
         expect(err.statusCode).toBe(403);
         expect(err.code).toBe("dashboard_session_required");
         expect(err.message).toBe("Dashboard session required");
+        expect(err.requiredScopes).toBeUndefined();
+      }
+    });
+
+    it("names required_scopes from a 403 body in the thrown message", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(403, { error: "Insufficient permissions", required_scopes: ["read"], requestId: "req_scopes" })
+      );
+      try {
+        await sdk.getAccountInfo();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(AetherError);
+        expect(err.statusCode).toBe(403);
+        expect(err.requiredScopes).toEqual(["read"]);
+        expect(err.message).toBe("Insufficient permissions. Required scopes: read.");
+        expect(err.requestId).toBe("req_scopes");
+      }
+    });
+
+    it("joins several required_scopes with a comma", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(403, { error: "Insufficient permissions", required_scopes: ["deploy", "apps"] })
+      );
+      try {
+        await sdk.getApps();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.requiredScopes).toEqual(["deploy", "apps"]);
+        expect(err.message).toBe("Insufficient permissions. Required scopes: deploy, apps.");
+      }
+    });
+
+    it("leaves the message unchanged when required_scopes is absent", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(403, { error: "Insufficient permissions" }));
+      try {
+        await sdk.getApps();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Insufficient permissions");
+        expect(err.requiredScopes).toBeUndefined();
+      }
+    });
+
+    it("ignores required_scopes when it is empty or not an array of strings", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(403, { error: "Insufficient permissions", required_scopes: [] }));
+      try {
+        await sdk.getApps();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Insufficient permissions");
+        expect(err.requiredScopes).toBeUndefined();
+      }
+
+      fetchSpy.mockResolvedValueOnce(jsonResponse(403, { error: "Insufficient permissions", required_scopes: "read" }));
+      try {
+        await sdk.getApps();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Insufficient permissions");
+        expect(err.requiredScopes).toBeUndefined();
+      }
+
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(403, { error: "Insufficient permissions", required_scopes: ["read", ""] })
+      );
+      try {
+        await sdk.getApps();
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err.message).toBe("Insufficient permissions");
+        expect(err.requiredScopes).toBeUndefined();
       }
     });
 

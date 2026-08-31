@@ -52,6 +52,33 @@ function urlEncode(strings: TemplateStringsArray, ...values: any[]): string {
   return result;
 }
 
+function readRequiredScopes(parsed: unknown): string[] | undefined {
+  if (parsed === null || typeof parsed !== "object") {
+    return undefined;
+  }
+  const value = (parsed as { required_scopes?: unknown }).required_scopes;
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+  const scopes: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.length === 0) {
+      return undefined;
+    }
+    scopes.push(item);
+  }
+  return scopes;
+}
+
+function messageWithRequiredScopes(message: string, requiredScopes?: string[]): string {
+  if (!requiredScopes || requiredScopes.length === 0) {
+    return message;
+  }
+  const trimmed = message.trimEnd();
+  const head = trimmed.endsWith(".") ? trimmed : `${trimmed}.`;
+  return `${head} Required scopes: ${requiredScopes.join(", ")}.`;
+}
+
 class AccountManager {
   public static AppPermission = {
     OWNER: "Owner",
@@ -377,7 +404,7 @@ class AccountManager {
       try {
         parsed = JSON.parse(text);
       } catch {
-        /* not JSON */
+        parsed = undefined;
       }
     }
 
@@ -392,7 +419,14 @@ class AccountManager {
 
     const message = (parsed && (parsed.error || parsed.message)) || text || res.statusText || "Request failed";
     const code: string | undefined = parsed && typeof parsed.code === "string" ? parsed.code : undefined;
-    throw new AetherError(message, res.status, requestId, code);
+    const requiredScopes = readRequiredScopes(parsed);
+    throw new AetherError(
+      messageWithRequiredScopes(message, requiredScopes),
+      res.status,
+      requestId,
+      code,
+      requiredScopes
+    );
   }
 
   private headersToObject(h: Headers): Record<string, string> {

@@ -583,7 +583,9 @@ function withDashboardSessionHint(error: unknown, command: cli.ICommand): unknow
     return error;
   }
   const hint = dashboardSessionHint(command);
-  return hint ? new AetherError(hint, error.statusCode, error.requestId, error.code) : error;
+  return hint
+    ? new AetherError(hint, error.statusCode, error.requestId, error.code, error.requiredScopes)
+    : error;
 }
 
 export function execute(command: cli.ICommand) {
