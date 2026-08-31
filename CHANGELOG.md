@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.7.0...v0.7.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **cli:** print required scopes on 403 errors ([#116](https://github.com/Monoradioactivo/aether-cli/issues/116)) ([a676234](https://github.com/Monoradioactivo/aether-cli/commit/a676234e7c0c02bd0f31ee3b513f4335cdc2938d))
+
 ## [0.7.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.6.1...v0.7.0) (2026-08-30)
 
 
