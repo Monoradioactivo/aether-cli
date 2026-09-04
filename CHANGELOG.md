@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.7.4...v0.8.0) (2026-09-04)
+
+
+### Features
+
+* **cli:** skip only true duplicates under --noDuplicateReleaseError ([#128](https://github.com/Monoradioactivo/aether-cli/issues/128)) ([7092faf](https://github.com/Monoradioactivo/aether-cli/commit/7092faf5547a8a46c3f4e1434fec29f0571d34a5))
+
 ## [0.7.4](https://github.com/Monoradioactivo/aether-cli/compare/v0.7.3...v0.7.4) (2026-08-31)
 
 
