@@ -2257,6 +2257,53 @@ describe("command-executor", () => {
     });
   });
 
+  describe("noDuplicateReleaseError only swallows a duplicate package", () => {
+    const promoteWith = (noDuplicateReleaseError: boolean) =>
+      executor.execute({
+        type: cli.CommandType.promote,
+        appName: "MyApp",
+        sourceDeploymentName: "Staging",
+        destDeploymentName: "Production",
+        noDuplicateReleaseError,
+      } as any);
+
+    const conflict = (code?: string) => new AetherError("server says conflict", 409, "req_1", code);
+
+    beforeEach(() => {
+      executor.sdk = mockSdkMethods;
+    });
+
+    it("skips a 409 that names duplicate_release", async () => {
+      mockSdkMethods.promote.mockRejectedValue(conflict("duplicate_release"));
+      await expect(promoteWith(true)).resolves.toBeUndefined();
+    });
+
+    it("fails on a 409 that names an unfinished rollout", async () => {
+      mockSdkMethods.promote.mockRejectedValue(conflict("unfinished_rollout"));
+      await expect(promoteWith(true)).rejects.toThrow(/server says conflict/);
+    });
+
+    it("skips a 409 that names no code, which keeps older servers working", async () => {
+      mockSdkMethods.promote.mockRejectedValue(conflict(undefined));
+      await expect(promoteWith(true)).resolves.toBeUndefined();
+    });
+
+    it("fails on a 409 naming a code it does not know", async () => {
+      mockSdkMethods.promote.mockRejectedValue(conflict("some_future_conflict"));
+      await expect(promoteWith(true)).rejects.toThrow(/server says conflict/);
+    });
+
+    it("fails on a duplicate_release 409 when the flag is off", async () => {
+      mockSdkMethods.promote.mockRejectedValue(conflict("duplicate_release"));
+      await expect(promoteWith(false)).rejects.toThrow(/server says conflict/);
+    });
+
+    it("does not swallow a non-conflict status carrying a code", async () => {
+      mockSdkMethods.promote.mockRejectedValue(new AetherError("gone", 410, "req_1", "duplicate_release"));
+      await expect(promoteWith(true)).rejects.toThrow(/gone/);
+    });
+  });
+
   describe("ci metadata enrichment", () => {
     beforeEach(() => {
       executor.sdk = mockSdkMethods;
