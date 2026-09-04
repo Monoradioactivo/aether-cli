@@ -1992,8 +1992,15 @@ function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
   }
 }
 
+const DUPLICATE_RELEASE_CODE = "duplicate_release";
+
+function isSkippableDuplicate(error: AetherError): boolean {
+  if (error.statusCode !== 409) return false;
+  return error.code === undefined || error.code === DUPLICATE_RELEASE_CODE;
+}
+
 function releaseErrorHandler(error: AetherError, command: cli.ICommand): void {
-  if ((<any>command).noDuplicateReleaseError && error.statusCode === 409) {
+  if ((<any>command).noDuplicateReleaseError && isSkippableDuplicate(error)) {
     console.warn(chalk.yellow("[Warning] " + error.message));
   } else {
     throw error;
