@@ -1,0 +1,80 @@
+name: Snyk
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: snyk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  snyk:
+    name: Snyk
+    runs-on: ubuntu-latest
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      SNYK_PROJECT_ARGS: "--file=package-lock.json --package-manager=npm"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install the Snyk CLI
+        run: npm install --global snyk@1.1307.1
+      - name: Fail on newly introduced high or critical issues
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+
+          scan() {
+            local dir="$1" out="$2" code=0
+            ( cd "$dir" && snyk test $SNYK_PROJECT_ARGS --ignore-policy --severity-threshold=high --json-file-output="$out" ) >/dev/null 2>&1 || code=$?
+            if [ "$code" -gt 1 ] || [ ! -s "$out" ]; then
+              echo "::error::snyk test could not complete in $dir (exit $code)"
+              ( cd "$dir" && snyk test $SNYK_PROJECT_ARGS --ignore-policy --severity-threshold=high ) || true
+              exit 1
+            fi
+          }
+
+          projects() {
+            jq '[.. | objects | select(has("vulnerabilities"))] | length' "$1"
+          }
+
+          ids() {
+            jq -r '[.. | objects | select(has("vulnerabilities")) | .vulnerabilities[]?.id] | unique | .[]' "$1"
+          }
+
+          scan "$GITHUB_WORKSPACE" "$RUNNER_TEMP/head.json"
+          git worktree add -q --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          scan "$RUNNER_TEMP/base" "$RUNNER_TEMP/base.json"
+
+          head_projects="$(projects "$RUNNER_TEMP/head.json")"
+          base_projects="$(projects "$RUNNER_TEMP/base.json")"
+          if [ "$head_projects" -lt "$base_projects" ]; then
+            echo "::error::this pull request scans $head_projects project(s) where $BASE_REF scans $base_projects"
+            exit 1
+          fi
+
+          ids "$RUNNER_TEMP/head.json" > "$RUNNER_TEMP/head.ids"
+          ids "$RUNNER_TEMP/base.json" > "$RUNNER_TEMP/base.ids"
+
+          new="$(comm -13 "$RUNNER_TEMP/base.ids" "$RUNNER_TEMP/head.ids")"
+          if [ -n "$new" ]; then
+            echo "::error::This pull request introduces high or critical issues that $BASE_REF does not carry:"
+            echo "$new"
+            exit 1
+          fi
+          echo "No new high or critical issues. $BASE_REF already carries $(wc -l < "$RUNNER_TEMP/base.ids" | tr -d ' ')."
+      - name: Report the dependency state to Snyk
+        if: github.event_name == 'push'
+        run: snyk monitor $SNYK_PROJECT_ARGS
