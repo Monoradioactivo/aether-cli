@@ -109,6 +109,38 @@ export interface DeploymentMetricsHistory {
   days: DeploymentMetricsHistoryDay[];
 }
 
+export type AppTransferStatus = "pending" | "accepted" | "cancelled" | "expired";
+
+export interface AppTransfer {
+  id: string;
+  appId: string;
+  appName?: string;
+  fromAccountId: string;
+  toAccountId: string;
+  fromTenantId: string;
+  toTenantId: string;
+  fromEmail?: string;
+  toEmail?: string;
+  status: AppTransferStatus;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface AppTransferWarnings {
+  quotaExceeded: boolean;
+  nameConflict: boolean;
+}
+
+export interface AppTransferCreateResponse {
+  transfer: AppTransfer;
+  warnings: AppTransferWarnings;
+}
+
+export interface AppTransferListResponse {
+  inbound: AppTransfer[];
+  outbound: AppTransfer[];
+}
+
 export type ApiKeyScope = "deploy" | "apps" | "keys" | "read";
 
 export interface ApiKey {

@@ -11,6 +11,10 @@ const mockSdkMethods: Record<string, jest.Mock> = {
   removeApp: jest.fn(),
   renameApp: jest.fn(),
   transferApp: jest.fn(),
+  createAppTransfer: jest.fn(),
+  listAppTransfers: jest.fn(),
+  acceptAppTransfer: jest.fn(),
+  cancelAppTransfer: jest.fn(),
   addCollaborator: jest.fn(),
   getCollaborators: jest.fn(),
   removeCollaborator: jest.fn(),
@@ -641,6 +645,71 @@ describe("command-executor", () => {
         email: "new-owner@example.com",
       });
       expect(mockSdkMethods.transferApp).toHaveBeenCalledWith("MyApp", "new-owner@example.com");
+    });
+
+    it("appTransferCreate prints transfer id and warnings without calling transferApp", async () => {
+      mockSdkMethods.createAppTransfer.mockResolvedValue({
+        transfer: { id: "22222222-2222-2222-2222-222222222222" },
+        warnings: { quotaExceeded: true, nameConflict: false },
+      });
+      const logSpy = jest.spyOn(executor, "log").mockImplementation(() => undefined);
+      await executor.execute({
+        type: cli.CommandType.appTransferCreate,
+        appName: "MyApp",
+        email: "other@example.com",
+        force: true,
+      });
+      expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledWith("MyApp", "other@example.com");
+      expect(mockSdkMethods.transferApp).not.toHaveBeenCalled();
+      expect(logSpy.mock.calls.some((call) => String(call[0]).includes("22222222-2222-2222-2222-222222222222"))).toBe(true);
+      expect(logSpy.mock.calls.some((call) => String(call[0]).includes("No email is sent"))).toBe(true);
+      expect(logSpy.mock.calls.some((call) => String(call[0]).includes("quota"))).toBe(true);
+      logSpy.mockRestore();
+    });
+
+    it("appTransferList calls listAppTransfers", async () => {
+      mockSdkMethods.listAppTransfers.mockResolvedValue({ inbound: [], outbound: [] });
+      await executor.execute({
+        type: cli.CommandType.appTransferList,
+        format: "json",
+      });
+      expect(mockSdkMethods.listAppTransfers).toHaveBeenCalled();
+    });
+
+    it("appTransferAccept with force accepts by id", async () => {
+      mockSdkMethods.acceptAppTransfer.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.appTransferAccept,
+        transferId: "22222222-2222-2222-2222-222222222222",
+        force: true,
+      });
+      expect(mockSdkMethods.acceptAppTransfer).toHaveBeenCalledWith("22222222-2222-2222-2222-222222222222");
+    });
+
+    it("appTransferCancel with force cancels by id", async () => {
+      mockSdkMethods.cancelAppTransfer.mockResolvedValue(undefined);
+      await executor.execute({
+        type: cli.CommandType.appTransferCancel,
+        transferId: "33333333-3333-3333-3333-333333333333",
+        force: true,
+      });
+      expect(mockSdkMethods.cancelAppTransfer).toHaveBeenCalledWith("33333333-3333-3333-3333-333333333333");
+    });
+
+    it("appTransferList session 403 gets login hint", async () => {
+      const { AetherError } = require("../script/errors");
+      mockSdkMethods.listAppTransfers.mockRejectedValue(
+        new AetherError(
+          "This operation requires a login session. API keys and named access keys cannot access it.",
+          403
+        )
+      );
+      await expect(
+        executor.execute({
+          type: cli.CommandType.appTransferList,
+          format: "table",
+        })
+      ).rejects.toThrow(/aether login/);
     });
   });
 

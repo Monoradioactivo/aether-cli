@@ -13,6 +13,8 @@ import {
   ApiKeyUpdateRequest,
   ApiKeyWithSecret,
   App,
+  AppTransferCreateResponse,
+  AppTransferListResponse,
   CollaboratorMap,
   CustomHeaders,
   Deployment,
@@ -207,6 +209,24 @@ class AccountManager {
 
   public async transferApp(appName: string, email: string): Promise<void> {
     await this.request("POST", urlEncode`/v1/apps/${appName}/transfers`, { email }, false);
+  }
+
+  public async createAppTransfer(appName: string, email: string): Promise<AppTransferCreateResponse> {
+    const res = await this.request("POST", "/v1/app-transfers", { appName, email }, true);
+    return res.body;
+  }
+
+  public async listAppTransfers(): Promise<AppTransferListResponse> {
+    const res = await this.request("GET", "/v1/app-transfers", undefined, true);
+    return res.body;
+  }
+
+  public async acceptAppTransfer(transferId: string): Promise<void> {
+    await this.request("POST", urlEncode`/v1/app-transfers/${transferId}/accept`, undefined, false);
+  }
+
+  public async cancelAppTransfer(transferId: string): Promise<void> {
+    await this.request("DELETE", urlEncode`/v1/app-transfers/${transferId}`, undefined, false);
   }
 
   public async getCollaborators(appName: string): Promise<CollaboratorMap> {
