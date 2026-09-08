@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.8.0...v0.9.0) (2026-09-08)
+
+
+### Features
+
+* **cli:** add app-transfer create list accept cancel ([#133](https://github.com/Monoradioactivo/aether-cli/issues/133)) ([a547ecb](https://github.com/Monoradioactivo/aether-cli/commit/a547ecb7c8a9ecf1b39c618ebab4b200a40799e8))
+
 ## [0.8.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.7.4...v0.8.0) (2026-09-04)
 
 
