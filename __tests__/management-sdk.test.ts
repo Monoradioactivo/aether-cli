@@ -311,6 +311,48 @@ describe("management-sdk / AccountManager", () => {
       expect(url).toBe(`${TEST_SERVER}/v1/apps/my-app/transfers`);
       expect(JSON.parse(init.body as string)).toEqual({ email: "new@owner.com" });
     });
+
+    it("createAppTransfer POSTs to /v1/app-transfers and returns body", async () => {
+      const sdk = newSdk();
+      const body = {
+        transfer: { id: "22222222-2222-2222-2222-222222222222" },
+        warnings: { quotaExceeded: false, nameConflict: true },
+      };
+      fetchSpy.mockResolvedValueOnce(jsonResponse(201, body));
+      await expect(sdk.createAppTransfer("my-app", "new@owner.com")).resolves.toEqual(body);
+      const { url, init } = lastFetchCall(fetchSpy);
+      expect(url).toBe(`${TEST_SERVER}/v1/app-transfers`);
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body as string)).toEqual({ appName: "my-app", email: "new@owner.com" });
+    });
+
+    it("listAppTransfers GETs /v1/app-transfers", async () => {
+      const sdk = newSdk();
+      const body = { inbound: [], outbound: [] };
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, body));
+      await expect(sdk.listAppTransfers()).resolves.toEqual(body);
+      const { url, init } = lastFetchCall(fetchSpy);
+      expect(url).toBe(`${TEST_SERVER}/v1/app-transfers`);
+      expect(init.method).toBe("GET");
+    });
+
+    it("acceptAppTransfer POSTs accept", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(emptyResponse(204));
+      await sdk.acceptAppTransfer("22222222-2222-2222-2222-222222222222");
+      const { url, init } = lastFetchCall(fetchSpy);
+      expect(url).toBe(`${TEST_SERVER}/v1/app-transfers/22222222-2222-2222-2222-222222222222/accept`);
+      expect(init.method).toBe("POST");
+    });
+
+    it("cancelAppTransfer DELETEs the transfer", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(emptyResponse(204));
+      await sdk.cancelAppTransfer("33333333-3333-3333-3333-333333333333");
+      const { url, init } = lastFetchCall(fetchSpy);
+      expect(url).toBe(`${TEST_SERVER}/v1/app-transfers/33333333-3333-3333-3333-333333333333`);
+      expect(init.method).toBe("DELETE");
+    });
   });
 
   describe("collaborators", () => {

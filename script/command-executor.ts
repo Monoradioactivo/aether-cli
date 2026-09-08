@@ -34,6 +34,10 @@ import {
   ApiKeyUpdateRequest,
   ApiKeyWithSecret,
   App,
+  AppTransfer,
+  AppTransferCreateResponse,
+  AppTransferListResponse,
+  AppTransferWarnings,
   CollaboratorMap,
   CollaboratorProperties,
   Deployment,
@@ -352,6 +356,93 @@ function appTransfer(command: cli.IAppTransferCommand): Promise<void> {
   });
 }
 
+function formatAppTransferWarnings(warnings: AppTransferWarnings): string[] {
+  const lines: string[] = [];
+  if (warnings.quotaExceeded) {
+    lines.push(
+      "Warning: accepting would push the destination workspace over its app quota. The invite was still created; accept will fail until quota allows it."
+    );
+  }
+  if (warnings.nameConflict) {
+    lines.push(
+      "Warning: the destination workspace already has an app with this name. The invite was still created; accept will fail until the name clash is resolved."
+    );
+  }
+  return lines;
+}
+
+function appTransferCreate(command: cli.IAppTransferCreateCommand): Promise<void> {
+  throwForInvalidEmail(command.email);
+
+  const confirmMessage =
+    'Create a pending cross-workspace transfer of app "' +
+    command.appName +
+    '" to "' +
+    command.email +
+    '"? Ownership does not move until they accept. On accept, every current collaborator is removed from the app.';
+
+  return confirmDestructive(command, confirmMessage).then((wasConfirmed: boolean) => {
+    if (!wasConfirmed) {
+      log("Cross-workspace transfer cancelled.");
+      return;
+    }
+
+    return sdk.createAppTransfer(command.appName, command.email).then((result: AppTransferCreateResponse): void => {
+      log(
+        'Created pending cross-workspace transfer of app "' +
+          command.appName +
+          '" to "' +
+          command.email +
+          '". Transfer id: ' +
+          result.transfer.id +
+          "."
+      );
+      log("Ownership has not moved yet. The recipient must run `aether app-transfer accept " + result.transfer.id + "`.");
+      log("No email is sent. Share the transfer id with the recipient, or have them run `aether app-transfer ls` after `aether login`.");
+      formatAppTransferWarnings(result.warnings).forEach((line: string) => log(line));
+    });
+  });
+}
+
+function appTransferList(command: cli.IAppTransferListCommand): Promise<void> {
+  throwForInvalidOutputFormat(command.format);
+
+  return sdk.listAppTransfers().then((listing: AppTransferListResponse): void => {
+    printAppTransferList(command.format, listing);
+  });
+}
+
+function appTransferAccept(command: cli.IAppTransferAcceptCommand): Promise<void> {
+  const confirmMessage =
+    "Accept transfer " +
+    command.transferId +
+    "? The app will move into your workspace and every previous collaborator will be removed.";
+
+  return confirmDestructive(command, confirmMessage).then((wasConfirmed: boolean) => {
+    if (!wasConfirmed) {
+      log("Accept cancelled.");
+      return;
+    }
+
+    return sdk.acceptAppTransfer(command.transferId).then((): void => {
+      log("Accepted transfer " + command.transferId + ". The app is now in your workspace.");
+    });
+  });
+}
+
+function appTransferCancel(command: cli.IAppTransferCancelCommand): Promise<void> {
+  return confirmDestructive(command, "Cancel pending transfer " + command.transferId + "?").then((wasConfirmed: boolean) => {
+    if (!wasConfirmed) {
+      log("Cancel aborted.");
+      return;
+    }
+
+    return sdk.cancelAppTransfer(command.transferId).then((): void => {
+      log("Cancelled transfer " + command.transferId + ".");
+    });
+  });
+}
+
 function addCollaborator(command: cli.ICollaboratorAddCommand): Promise<void> {
   throwForInvalidEmail(command.email);
 
@@ -562,6 +653,8 @@ function deserializeConnectionInfo(): ILoginConnectionInfo {
 }
 
 const DASHBOARD_SESSION_REQUIRED_CODE = "dashboard_session_required";
+const LOGIN_SESSION_REQUIRED_MESSAGE =
+  "This operation requires a login session. API keys and named access keys cannot access it.";
 
 function dashboardSessionHint(command: cli.ICommand): string | undefined {
   switch (command.type) {
@@ -592,6 +685,25 @@ function withDashboardSessionHint(error: unknown, command: cli.ICommand): unknow
   return hint
     ? new AetherError(hint, error.statusCode, error.requestId, error.code, error.requiredScopes)
     : error;
+}
+
+function withLoginSessionHint(error: unknown, command: cli.ICommand): unknown {
+  if (!(error instanceof AetherError) || error.statusCode !== 403) {
+    return error;
+  }
+  if (error.message.indexOf(LOGIN_SESSION_REQUIRED_MESSAGE) === -1) {
+    return error;
+  }
+  if (command.type !== cli.CommandType.appTransferList && command.type !== cli.CommandType.appTransferAccept) {
+    return error;
+  }
+  return new AetherError(
+    LOGIN_SESSION_REQUIRED_MESSAGE + " Sign in with `aether login` (browser session), not `--accessKey` or an API key.",
+    error.statusCode,
+    error.requestId,
+    error.code,
+    error.requiredScopes
+  );
 }
 
 export function execute(command: cli.ICommand) {
@@ -670,6 +782,18 @@ export function execute(command: cli.ICommand) {
       case cli.CommandType.appTransfer:
         return appTransfer(<cli.IAppTransferCommand>command);
 
+      case cli.CommandType.appTransferCreate:
+        return appTransferCreate(<cli.IAppTransferCreateCommand>command);
+
+      case cli.CommandType.appTransferList:
+        return appTransferList(<cli.IAppTransferListCommand>command);
+
+      case cli.CommandType.appTransferAccept:
+        return appTransferAccept(<cli.IAppTransferAcceptCommand>command);
+
+      case cli.CommandType.appTransferCancel:
+        return appTransferCancel(<cli.IAppTransferCancelCommand>command);
+
       case cli.CommandType.collaboratorAdd:
         return addCollaborator(<cli.ICollaboratorAddCommand>command);
 
@@ -743,7 +867,7 @@ export function execute(command: cli.ICommand) {
   });
 
   return dispatched.catch((error: unknown) => {
-    throw withDashboardSessionHint(error, command);
+    throw withLoginSessionHint(withDashboardSessionHint(error, command), command);
   });
 }
 
@@ -966,6 +1090,41 @@ function printCollaboratorsList(format: string, collaborators: CollaboratorMap):
       });
     });
   }
+}
+
+function printAppTransferList(format: string, listing: AppTransferListResponse): void {
+  if (format === "json") {
+    printJson(listing);
+    return;
+  }
+
+  if (listing.inbound.length === 0 && listing.outbound.length === 0) {
+    log("No pending cross-workspace transfers.");
+    return;
+  }
+
+  printTable(["Direction", "Transfer Id", "App", "From", "To", "Expires"], (dataSource: any[]): void => {
+    listing.inbound.forEach((transfer: AppTransfer) => {
+      dataSource.push([
+        "inbound",
+        transfer.id,
+        transfer.appName || transfer.appId,
+        transfer.fromEmail || transfer.fromAccountId,
+        transfer.toEmail || transfer.toAccountId,
+        transfer.expiresAt,
+      ]);
+    });
+    listing.outbound.forEach((transfer: AppTransfer) => {
+      dataSource.push([
+        "outbound",
+        transfer.id,
+        transfer.appName || transfer.appId,
+        transfer.fromEmail || transfer.fromAccountId,
+        transfer.toEmail || transfer.toAccountId,
+        transfer.expiresAt,
+      ]);
+    });
+  });
 }
 
 function printDeploymentList(command: cli.IDeploymentListCommand, deployments: Deployment[], showPackage: boolean = true): void {

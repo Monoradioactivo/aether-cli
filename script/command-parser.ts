@@ -42,6 +42,10 @@ export function showHelp(showRootDescription?: boolean): void {
 const ACCESS_KEY_DASHBOARD_NOTE =
   "Access keys are created in the dashboard under Account > CLI access keys; this command is refused from a CLI session.";
 const API_KEY_DASHBOARD_NOTE = "API keys are created in the dashboard under API Keys; this command is refused from a CLI session.";
+const APP_TRANSFER_SESSION_NOTE =
+  "list and accept require a browser login session (`aether login`). API keys and named access keys can create and cancel only.";
+const APP_TRANSFER_CROSS_WORKSPACE_NOTE =
+  "Same-workspace ownership moves use `aether app transfer`. Cross-workspace pending invites use this command group.";
 
 function accessKeyAdd(commandName: string, yargs: yargs.Argv): void {
   isValidCommand = true;
@@ -255,6 +259,33 @@ function appRemove(commandName: string, yargs: yargs.Argv): void {
     .usage(USAGE_PREFIX + " app " + commandName + " <appName>")
     .demand(/*count*/ 1, /*max*/ 1) // Require exactly one non-option arguments
     .example("app " + commandName + " MyApp", 'Removes app "MyApp"');
+
+  addCommonConfiguration(yargs);
+}
+
+function appTransferList(commandName: string, yargs: yargs.Argv): void {
+  isValidCommand = true;
+  yargs
+    .usage(USAGE_PREFIX + " app-transfer " + commandName + " [options]\n\n" + APP_TRANSFER_SESSION_NOTE)
+    .demand(/*count*/ 0, /*max*/ 0)
+    .example("app-transfer " + commandName, "Lists pending inbound and outbound cross-workspace transfers")
+    .example("app-transfer " + commandName + " --format json", "Lists pending transfers in JSON format")
+    .option("format", {
+      default: "table",
+      demand: false,
+      description: 'Output format to display transfers with ("json" or "table")',
+      type: "string",
+    });
+
+  addCommonConfiguration(yargs);
+}
+
+function appTransferCancel(commandName: string, yargs: yargs.Argv): void {
+  isValidCommand = true;
+  yargs
+    .usage(USAGE_PREFIX + " app-transfer " + commandName + " <transferId>")
+    .demand(/*count*/ 1, /*max*/ 1)
+    .example("app-transfer " + commandName + " 22222222-2222-2222-2222-222222222222", "Cancels that pending outbound transfer");
 
   addCommonConfiguration(yargs);
 }
@@ -495,16 +526,56 @@ yargs
       })
       .command("list", "Lists the apps associated with your account", (yargs: yargs.Argv) => appList("list", yargs))
       .command("ls", "Lists the apps associated with your account", (yargs: yargs.Argv) => appList("ls", yargs))
-      .command("transfer", "Transfer the ownership of an app to another account", (yargs: yargs.Argv) => {
+      .command("transfer", "Transfer ownership to another account in the same workspace", (yargs: yargs.Argv) => {
         isValidCommand = true;
         yargs
-          .usage(USAGE_PREFIX + " app transfer <appName> <email>")
+          .usage(
+            USAGE_PREFIX +
+              " app transfer <appName> <email>\n\n" +
+              "Moves ownership immediately within the same workspace. For a different workspace, use `aether app-transfer create`."
+          )
           .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments
           .example("app transfer MyApp foo@bar.com", 'Transfers the ownership of app "MyApp" to an account with email "foo@bar.com"');
 
         addCommonConfiguration(yargs);
       })
       .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand); // Report unrecognized, non-hyphenated command category.
+
+    addCommonConfiguration(yargs);
+  })
+  .command("app-transfer", "Create and manage cross-workspace app transfer invites", (yargs: yargs.Argv) => {
+    yargs
+      .usage(USAGE_PREFIX + " app-transfer <command>\n\n" + APP_TRANSFER_CROSS_WORKSPACE_NOTE + "\n" + APP_TRANSFER_SESSION_NOTE)
+      .demand(/*count*/ 2, /*max*/ 2)
+      .command("create", "Create a pending cross-workspace transfer invite", (yargs: yargs.Argv): void => {
+        isValidCommand = true;
+        yargs
+          .usage(USAGE_PREFIX + " app-transfer create <appName> <email>")
+          .demand(/*count*/ 2, /*max*/ 2)
+          .example(
+            "app-transfer create MyApp other@example.com",
+            'Creates a pending invite to move app "MyApp" to the account with that email'
+          );
+
+        addCommonConfiguration(yargs);
+      })
+      .command("list", "List pending inbound and outbound transfers", (yargs: yargs.Argv) => appTransferList("list", yargs))
+      .command("ls", "List pending inbound and outbound transfers", (yargs: yargs.Argv) => appTransferList("ls", yargs))
+      .command("accept", "Accept a pending inbound transfer", (yargs: yargs.Argv): void => {
+        isValidCommand = true;
+        yargs
+          .usage(USAGE_PREFIX + " app-transfer accept <transferId>\n\n" + APP_TRANSFER_SESSION_NOTE)
+          .demand(/*count*/ 1, /*max*/ 1)
+          .example(
+            "app-transfer accept 22222222-2222-2222-2222-222222222222",
+            "Accepts that pending transfer into your workspace"
+          );
+
+        addCommonConfiguration(yargs);
+      })
+      .command("cancel", "Cancel a pending outbound transfer", (yargs: yargs.Argv) => appTransferCancel("cancel", yargs))
+      .command("rm", "Cancel a pending outbound transfer", (yargs: yargs.Argv) => appTransferCancel("rm", yargs))
+      .check((_argv: any, _aliases: { [aliases: string]: string }): any => isValidCommand);
 
     addCommonConfiguration(yargs);
   })
@@ -1252,6 +1323,39 @@ export function createCommand(): cli.ICommand {
 
               appTransferCommand.appName = arg2;
               appTransferCommand.email = arg3;
+            }
+            break;
+        }
+        break;
+
+      case "app-transfer":
+        switch (arg1) {
+          case "create":
+            if (arg2 && arg3) {
+              cmd = { type: cli.CommandType.appTransferCreate };
+              (<cli.IAppTransferCreateCommand>cmd).appName = arg2;
+              (<cli.IAppTransferCreateCommand>cmd).email = arg3;
+            }
+            break;
+
+          case "list":
+          case "ls":
+            cmd = { type: cli.CommandType.appTransferList };
+            (<cli.IAppTransferListCommand>cmd).format = argv["format"] as any;
+            break;
+
+          case "accept":
+            if (arg2) {
+              cmd = { type: cli.CommandType.appTransferAccept };
+              (<cli.IAppTransferAcceptCommand>cmd).transferId = arg2;
+            }
+            break;
+
+          case "cancel":
+          case "rm":
+            if (arg2) {
+              cmd = { type: cli.CommandType.appTransferCancel };
+              (<cli.IAppTransferCancelCommand>cmd).transferId = arg2;
             }
             break;
         }

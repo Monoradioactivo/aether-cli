@@ -290,6 +290,45 @@ describe("command-parser", () => {
     });
   });
 
+  describe("app-transfer", () => {
+    it("'app-transfer create <appName> <email>'", () => {
+      const cmd = parseArgs(["app-transfer", "create", "MyApp", "other@example.com"]);
+      expect(cmd.type).toBe(CommandType.appTransferCreate);
+      expect(cmd.appName).toBe("MyApp");
+      expect(cmd.email).toBe("other@example.com");
+    });
+
+    it("'app-transfer list' defaults --format to table", () => {
+      const cmd = parseArgs(["app-transfer", "list"]);
+      expect(cmd.type).toBe(CommandType.appTransferList);
+      expect(cmd.format).toBe("table");
+    });
+
+    it("'app-transfer ls --format json'", () => {
+      const cmd = parseArgs(["app-transfer", "ls", "--format", "json"]);
+      expect(cmd.type).toBe(CommandType.appTransferList);
+      expect(cmd.format).toBe("json");
+    });
+
+    it("'app-transfer accept <transferId>'", () => {
+      const cmd = parseArgs(["app-transfer", "accept", "22222222-2222-2222-2222-222222222222"]);
+      expect(cmd.type).toBe(CommandType.appTransferAccept);
+      expect(cmd.transferId).toBe("22222222-2222-2222-2222-222222222222");
+    });
+
+    it("'app-transfer cancel <transferId>'", () => {
+      const cmd = parseArgs(["app-transfer", "cancel", "33333333-3333-3333-3333-333333333333"]);
+      expect(cmd.type).toBe(CommandType.appTransferCancel);
+      expect(cmd.transferId).toBe("33333333-3333-3333-3333-333333333333");
+    });
+
+    it("'app-transfer rm' aliases cancel", () => {
+      const cmd = parseArgs(["app-transfer", "rm", "33333333-3333-3333-3333-333333333333"]);
+      expect(cmd.type).toBe(CommandType.appTransferCancel);
+      expect(cmd.transferId).toBe("33333333-3333-3333-3333-333333333333");
+    });
+  });
+
   describe("collaborator", () => {
     it("'collaborator add <appName> <email>'", () => {
       const cmd = parseArgs(["collaborator", "add", "MyApp", "alice@example.com"]);

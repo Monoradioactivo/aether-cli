@@ -17,6 +17,10 @@ export enum CommandType {
   appRemove,
   appRename,
   appTransfer,
+  appTransferCreate,
+  appTransferList,
+  appTransferAccept,
+  appTransferCancel,
   collaboratorAdd,
   collaboratorList,
   collaboratorRemove,
@@ -111,6 +115,23 @@ export interface IAppRenameCommand extends ICommand {
 export interface IAppTransferCommand extends ICommand {
   appName: string;
   email: string;
+}
+
+export interface IAppTransferCreateCommand extends ICommand {
+  appName: string;
+  email: string;
+}
+
+export interface IAppTransferListCommand extends ICommand {
+  format: string;
+}
+
+export interface IAppTransferAcceptCommand extends ICommand {
+  transferId: string;
+}
+
+export interface IAppTransferCancelCommand extends ICommand {
+  transferId: string;
 }
 
 export interface ICollaboratorAddCommand extends ICommand {

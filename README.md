@@ -59,7 +59,8 @@ Requires Node.js 22 or later.
 | `register` | Create a new Aether account |
 | `login`, `logout` | Session management |
 | `whoami` | Show the current account |
-| `app add\|ls\|rm\|rename\|transfer` | Manage apps |
+| `app add\|ls\|rm\|rename\|transfer` | Manage apps (same-workspace transfer) |
+| `app-transfer create\|ls\|accept\|cancel` | Cross-workspace pending app transfers |
 | `deployment add\|ls\|rm\|rename\|history\|metrics\|clear` | Manage deployment channels |
 | `release`, `release-react` | Upload a new release |
 | `patch` | Update metadata of an existing release (rollout %, mandatory, disabled, description) |
