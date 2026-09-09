@@ -25,8 +25,8 @@ jobs:
             echo "Skipping branch name policy for bot branch '$BRANCH'."
             exit 0
           fi
-          if [[ ! "$BRANCH" =~ ^(feat|fix|chore|refactor|docs)/ ]]; then
-            echo "::error::Branch '$BRANCH' must start with feat/, fix/, chore/, refactor/, or docs/"
+          if [[ ! "$BRANCH" =~ ^(feat|fix|chore|refactor|docs|test)/ ]]; then
+            echo "::error::Branch '$BRANCH' must start with feat/, fix/, chore/, refactor/, docs/, or test/"
             exit 1
           fi
           echo "Branch '$BRANCH' is valid."

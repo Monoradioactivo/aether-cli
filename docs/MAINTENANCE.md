@@ -54,6 +54,7 @@ Branches must start with one of:
 - `refactor/` — internal refactor with no behavior change
 - `chore/` — tooling, deps, infrastructure
 - `docs/` — documentation only
+- `test/` — test-only additions or changes
 
 Dependabot branches (`dependabot/*`) are exempt; the CI policy job early-exits for them.
 
