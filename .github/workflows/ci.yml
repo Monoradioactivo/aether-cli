@@ -19,8 +19,9 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Validate branch prefix
+        env:
+          BRANCH: ${{ github.head_ref }}
         run: |
-          BRANCH="${{ github.head_ref }}"
           if [[ "$BRANCH" =~ ^dependabot/ ]] || [[ "$BRANCH" =~ ^release-please-- ]]; then
             echo "Skipping branch name policy for bot branch '$BRANCH'."
             exit 0
@@ -55,6 +56,9 @@ jobs:
 
       - name: Build and typecheck
         run: npm run build
+
+      - name: Workflow run interpolation tests
+        run: node --test scripts/workflow-run-interpolation.test.mjs
 
       - name: Test
         run: npm test
