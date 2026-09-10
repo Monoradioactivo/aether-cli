@@ -60,5 +60,8 @@ jobs:
       - name: Workflow run interpolation tests
         run: node --test scripts/workflow-run-interpolation.test.mjs
 
+      - name: Release auto-merge gate tests
+        run: node --test scripts/release-auto-merge-gate.test.mjs
+
       - name: Test
         run: npm test
