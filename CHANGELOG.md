@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.0...v0.9.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **cli:** accept access keys that start with a dash in login --accessKey ([#141](https://github.com/Monoradioactivo/aether-cli/issues/141)) ([847b97c](https://github.com/Monoradioactivo/aether-cli/commit/847b97c7363127f23519ece18ddf73a0e0315017))
+* **cli:** fail on a release 409 that does not name a duplicate ([#139](https://github.com/Monoradioactivo/aether-cli/issues/139)) ([c2f0e19](https://github.com/Monoradioactivo/aether-cli/commit/c2f0e196a2df29e6709a20f8368c7c2f0ea995fc))
+
 ## [0.9.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.8.0...v0.9.0) (2026-09-08)
 
 
