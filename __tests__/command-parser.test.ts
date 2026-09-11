@@ -400,6 +400,12 @@ describe("command-parser", () => {
       expect(cmd.key).toBe("short-alias-key");
     });
 
+    it("'deployment add --key' accepts a key that starts with a dash", () => {
+      const cmd = parseArgs(["deployment", "add", "MyApp", "Prod", "--key", "-P9x_ke3YdashKey"]);
+      expect(cmd.type).toBe(CommandType.deploymentAdd);
+      expect(cmd.key).toBe("-P9x_ke3YdashKey");
+    });
+
     it("'deployment clear <appName> <deploymentName>'", () => {
       const cmd = parseArgs(["deployment", "clear", "MyApp", "Prod"]);
       expect(cmd.type).toBe(CommandType.deploymentHistoryClear);
@@ -510,6 +516,29 @@ describe("command-parser", () => {
       const cmd = parseArgs(["login", "--key", "raw-ak-via-alias"]);
       expect(cmd.type).toBe(CommandType.login);
       expect(cmd.accessKey).toBe("raw-ak-via-alias");
+    });
+
+    it("'login --accessKey <key>' accepts a key that starts with a dash", () => {
+      const cmd = parseArgs(["login", "--accessKey", "-Qw7_kP2abcDEF"]);
+      expect(cmd.type).toBe(CommandType.login);
+      expect(cmd.accessKey).toBe("-Qw7_kP2abcDEF");
+    });
+
+    it("'login --key <key>' (alias) accepts a key that starts with a dash", () => {
+      const cmd = parseArgs(["login", "--key", "-abc123XYZ"]);
+      expect(cmd.type).toBe(CommandType.login);
+      expect(cmd.accessKey).toBe("-abc123XYZ");
+    });
+
+    it("'login --accessKey=<key>' equals form accepts a key that starts with a dash", () => {
+      const cmd = parseArgs(["login", "--accessKey=-Qw7_kP2abcDEF"]);
+      expect(cmd.type).toBe(CommandType.login);
+      expect(cmd.accessKey).toBe("-Qw7_kP2abcDEF");
+    });
+
+    it("'login --accessKey' with no value fails the parse instead of logging in interactively", () => {
+      const { parseFailed } = parseArgsWithState(["login", "--accessKey"]);
+      expect(parseFailed).toBe(true);
     });
 
     it("'login --serverUrl <url>' normalises the URL", () => {
