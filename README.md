@@ -102,7 +102,7 @@ The CLI falls back to this automatically when it cannot open a browser or bind a
 For CI and other machines, keep passing a key:
 
 ```sh
-aether login --accessKey <your-api-key>
+aether login --accessKey=<your-api-key>
 ```
 
 `aether logout` revokes the device on the server and then clears the local credential. If the server cannot be reached, the local credential is cleared anyway and the device can still be revoked from the dashboard under Account > CLI & Devices.

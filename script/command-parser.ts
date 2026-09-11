@@ -461,6 +461,7 @@ function deploymentHistory(commandName: string, yargs: yargs.Argv): void {
 
 yargs
   .usage(USAGE_PREFIX + " <command>")
+  .parserConfiguration({ "nargs-eats-options": true })
   .demand(/*count*/ 1, /*max*/ 1) // Require exactly one non-option argument.
   .command("access-key", "View and manage the access keys associated with your account", (yargs: yargs.Argv) => {
     yargs
@@ -620,11 +621,12 @@ yargs
           .usage(USAGE_PREFIX + " deployment add <appName> <deploymentName>")
           .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments
           .example("deployment add MyApp MyDeployment", 'Adds deployment "MyDeployment" to app "MyApp"')
-          .example("deployment add MyApp MyDeployment -k abc123", 'Adds deployment key "abc123"')
+          .example("deployment add MyApp MyDeployment -k=abc123", 'Adds deployment key "abc123"')
           .option("key", {
             alias: "k",
             demand: false,
             description: "Specify deployment key",
+            nargs: 1,
             type: "string",
           });
 
@@ -666,12 +668,13 @@ yargs
       .demand(/*count*/ 0, /*max*/ 0)
       .example("login", "Opens your browser to authorize this machine")
       .example("login --device", "Prints a code to enter in a browser elsewhere (SSH, headless)")
-      .example("login --accessKey mykey", 'Logs in non-interactively using access key "mykey" (for CI/CD)')
+      .example("login --accessKey=mykey", 'Logs in non-interactively using access key "mykey" (for CI/CD)')
       .option("accessKey", {
         alias: "key",
         default: null,
         demand: false,
         description: "Access key to authenticate non-interactively, instead of opening a browser",
+        nargs: 1,
         type: "string",
       })
       .option("device", {

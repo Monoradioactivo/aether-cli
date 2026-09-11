@@ -13,9 +13,9 @@ def aetherRelease() {
             exit 1
         fi
         if [ -n "${AETHER_API_URL:-}" ]; then
-            aether login --accessKey "$AETHER_API_KEY" --serverUrl "$AETHER_API_URL"
+            aether login --accessKey="$AETHER_API_KEY" --serverUrl "$AETHER_API_URL"
         else
-            aether login --accessKey "$AETHER_API_KEY"
+            aether login --accessKey="$AETHER_API_KEY"
         fi
         aether release-react "$AETHER_APP_NAME" "$AETHER_PLATFORM" \\
             --deploymentName "$AETHER_DEPLOYMENT" \\
