@@ -651,6 +651,22 @@ describe("management-sdk / AccountManager", () => {
         process.chdir(cwdBefore);
       }
     });
+
+    it("release reports a 409 with a non-JSON body as status 409 with no code", async () => {
+      const sdk = newSdk();
+      const bundleFile = path.join(sandbox, "bundle-409-html.js");
+      fs.writeFileSync(bundleFile, "x");
+      fetchSpy.mockResolvedValueOnce(textResponse(409, "<html><body>409 Conflict</body></html>", { "content-type": "text/html" }));
+
+      try {
+        await sdk.release("MyApp", "Staging", bundleFile, "1.0.0", {});
+        fail("expected to throw");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(AetherError);
+        expect(err.statusCode).toBe(409);
+        expect(err.code).toBeUndefined();
+      }
+    });
   });
 
   describe("api keys", () => {

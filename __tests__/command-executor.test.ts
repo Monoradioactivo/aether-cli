@@ -2352,9 +2352,10 @@ describe("command-executor", () => {
       await expect(promoteWith(true)).rejects.toThrow(/server says conflict/);
     });
 
-    it("skips a 409 that names no code, which keeps older servers working", async () => {
+    it("fails on a 409 that names no code, since only a named duplicate is safe to skip", async () => {
       mockSdkMethods.promote.mockRejectedValue(conflict(undefined));
-      await expect(promoteWith(true)).resolves.toBeUndefined();
+      await expect(promoteWith(true)).rejects.toThrow(/server says conflict/);
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
     });
 
     it("fails on a 409 naming a code it does not know", async () => {
@@ -2370,6 +2371,39 @@ describe("command-executor", () => {
     it("does not swallow a non-conflict status carrying a code", async () => {
       mockSdkMethods.promote.mockRejectedValue(new AetherError("gone", 410, "req_1", "duplicate_release"));
       await expect(promoteWith(true)).rejects.toThrow(/gone/);
+    });
+
+    describe("on release", () => {
+      const releaseWith = (noDuplicateReleaseError: boolean) => {
+        jest.spyOn(fs, "lstatSync").mockReturnValue({ isDirectory: () => false } as any);
+        mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+        return executor.release({
+          type: cli.CommandType.release,
+          appName: "MyApp",
+          deploymentName: "Production",
+          package: "./bundle.js",
+          appStoreVersion: "1.0.0",
+          rollout: 100,
+          noDuplicateReleaseError,
+        });
+      };
+
+      it("skips a 409 that names duplicate_release", async () => {
+        mockSdkMethods.release.mockRejectedValue(conflict("duplicate_release"));
+        await expect(releaseWith(true)).resolves.toBeUndefined();
+        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("server says conflict"));
+      });
+
+      it("fails on a 409 that names no code", async () => {
+        mockSdkMethods.release.mockRejectedValue(conflict(undefined));
+        await expect(releaseWith(true)).rejects.toThrow(/server says conflict/);
+        expect(consoleWarnSpy).not.toHaveBeenCalled();
+      });
+
+      it("fails on a 409 that names an unfinished rollout", async () => {
+        mockSdkMethods.release.mockRejectedValue(conflict("unfinished_rollout"));
+        await expect(releaseWith(true)).rejects.toThrow(/server says conflict/);
+      });
     });
   });
 

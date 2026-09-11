@@ -2154,8 +2154,7 @@ function sessionRemove(command: cli.ISessionRemoveCommand): Promise<void> {
 const DUPLICATE_RELEASE_CODE = "duplicate_release";
 
 function isSkippableDuplicate(error: AetherError): boolean {
-  if (error.statusCode !== 409) return false;
-  return error.code === undefined || error.code === DUPLICATE_RELEASE_CODE;
+  return error.statusCode === 409 && error.code === DUPLICATE_RELEASE_CODE;
 }
 
 function releaseErrorHandler(error: AetherError, command: cli.ICommand): void {
