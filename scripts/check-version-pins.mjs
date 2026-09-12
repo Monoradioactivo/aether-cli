@@ -3,8 +3,8 @@ import { readFileSync, readdirSync } from "node:fs";
 const dependency = "@aetherpush/cli";
 const templatesDirectory = "examples/ci";
 const expectedTemplates = ["Jenkinsfile", "bitrise.yml", "circleci-config.yml", "gitlab-ci.yml"];
-const config = JSON.parse(readFileSync("renovate.json", "utf8"));
-const managers = config.customManagers ?? [];
+const config = JSON.parse(readFileSync("release-please-config.json", "utf8"));
+const extraFiles = config.packages?.["."]?.["extra-files"] ?? [];
 const templates = readdirSync(templatesDirectory, { withFileTypes: true })
   .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
   .map((entry) => entry.name)
@@ -18,6 +18,24 @@ for (const name of expectedTemplates) {
   }
 }
 
+const configuredPaths = extraFiles
+  .filter((entry) => entry?.type === "generic" && typeof entry.path === "string")
+  .map((entry) => entry.path)
+  .sort();
+
+for (const name of expectedTemplates) {
+  const path = `${templatesDirectory}/${name}`;
+  if (!configuredPaths.includes(path)) {
+    errors.push(`${path}: release-please does not manage the pin`);
+  }
+}
+
+for (const path of configuredPaths) {
+  if (!expectedTemplates.map((name) => `${templatesDirectory}/${name}`).includes(path)) {
+    errors.push(`${path}: release-please manages an unregistered template`);
+  }
+}
+
 for (const name of templates) {
   const path = `${templatesDirectory}/${name}`;
   if (!expectedTemplates.includes(name)) {
@@ -25,27 +43,15 @@ for (const name of templates) {
     continue;
   }
 
-  const coveringManagers = managers.filter(
-    (manager) => manager.depNameTemplate === dependency && (manager.fileMatch ?? []).some((pattern) => new RegExp(pattern).test(path))
-  );
-
-  if (coveringManagers.length !== 1) {
-    errors.push(`${path}: expected one Renovate manager for ${dependency}, found ${coveringManagers.length}`);
-    continue;
-  }
-
   const content = readFileSync(path, "utf8");
-  const matches = [];
-  for (const source of coveringManagers[0].matchStrings ?? []) {
-    for (const match of content.matchAll(new RegExp(source, "g"))) {
-      if (match.groups?.currentValue) {
-        matches.push(match.groups.currentValue);
-      }
-    }
-  }
+  const matches = content
+    .split("\n")
+    .filter((line) => line.includes("x-release-please-version"))
+    .map((line) => line.match(/\d+\.\d+\.\d+/)?.[0])
+    .filter((version) => version !== undefined);
 
   if (matches.length !== 1) {
-    errors.push(`${path}: expected one managed ${dependency} pin, found ${matches.length}`);
+    errors.push(`${path}: expected one release-please-managed ${dependency} pin, found ${matches.length}`);
     continue;
   }
 
@@ -59,7 +65,7 @@ if (versions.size > 1) {
 }
 
 if (errors.length > 0) {
-  console.error("template pin check: CI templates drifted from renovate.json");
+  console.error("template pin check: CI templates drifted from release-please configuration");
   for (const error of errors) console.error(`  ${error}`);
   process.exit(1);
 }

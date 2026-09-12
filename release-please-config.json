@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "examples/ci/gitlab-ci.yml"
+        },
+        {
+          "type": "generic",
+          "path": "examples/ci/bitrise.yml"
+        },
+        {
+          "type": "generic",
+          "path": "examples/ci/Jenkinsfile"
+        },
+        {
+          "type": "generic",
+          "path": "examples/ci/circleci-config.yml"
+        }
+      ]
+    }
+  }
+}

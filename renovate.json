@@ -7,38 +7,7 @@
   ],
   "branchPrefix": "chore/renovate-",
   "semanticCommits": "enabled",
-  "customManagers": [
-    {
-      "customType": "regex",
-      "fileMatch": [
-        "^examples/ci/(gitlab-ci\\.yml|Jenkinsfile|circleci-config\\.yml|bitrise\\.yml)$"
-      ],
-      "matchStrings": [
-        "AETHER_CLI_VERSION: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
-        "AETHER_CLI_VERSION = '(?<currentValue>\\d+\\.\\d+\\.\\d+)'",
-        "default: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
-      ],
-      "depNameTemplate": "@aetherpush/cli",
-      "datasourceTemplate": "npm"
-    }
-  ],
   "packageRules": [
-    {
-      "matchManagers": [
-        "custom.regex"
-      ],
-      "matchPackageNames": [
-        "@aetherpush/cli"
-      ],
-      "semanticCommitType": "docs",
-      "semanticCommitScope": "ci",
-      "automerge": true,
-      "automergeStrategy": "squash",
-      "schedule": [
-        "* * * * *"
-      ],
-      "minimumReleaseAge": null
-    },
     {
       "matchManagers": [
         "npm"
