@@ -22,7 +22,7 @@ jobs:
         env:
           BRANCH: ${{ github.head_ref }}
         run: |
-          if [[ "$BRANCH" =~ ^dependabot/ ]] || [[ "$BRANCH" =~ ^release-please-- ]]; then
+          if [[ "$BRANCH" =~ ^release-please-- ]]; then
             echo "Skipping branch name policy for bot branch '$BRANCH'."
             exit 0
           fi
