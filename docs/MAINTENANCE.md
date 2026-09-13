@@ -59,8 +59,9 @@ Renovate branches start with `chore/renovate-` and follow the policy like any ot
 |---------------------------|----------|-------------------------------------------------------------------------------------------|
 | `RELEASE_BOT_APP_ID`      | secret   | App ID of the release bot, used to mint its token in the release workflows                |
 | `RELEASE_BOT_PRIVATE_KEY` | secret   | Private key of the release bot App                                                        |
-| `NPM_TOKEN`               | secret   | Not referenced by any workflow. Publishing uses OIDC trusted publishing                   |
 | `RELEASE_AUTO_MERGE_ARM`  | variable | `true` lets `auto-merge-release.yml` arm auto-merge on a release PR that passes the gate  |
+
+No npm token is stored in the repository. Publishing uses OIDC trusted publishing (see below).
 
 ## npm trusted publisher
 
