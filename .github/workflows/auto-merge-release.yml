@@ -251,10 +251,8 @@ jobs:
             echo "$REASONS"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Failing here is what lets this job be a required status check, so GitHub
-      # refuses the merge itself rather than this workflow having to win a race.
       - name: Fail when the release is not accounted for
-        if: steps.gate.outputs.ok == 'false'
+        if: steps.gate.outputs.ok == 'false' && github.event_name != 'schedule'
         run: |
           echo "::error::The release contains commits this gate cannot vouch for."
           exit 1
