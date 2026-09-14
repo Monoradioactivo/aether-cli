@@ -27,15 +27,13 @@ env:
   RELEASE_BOT_LOGIN: aetherpush-release-bot[bot]
   GATE_CONTEXT: Release auto-merge gate
   GATE_SCRIPT: scripts/check-release-auto-merge.mjs
+  RECHECK_LABEL: release-gate-recheck
 
 jobs:
   gate:
     name: Release auto-merge gate
     runs-on: ubuntu-latest
     steps:
-      # This job runs on every pull request and succeeds at once on the ones that are
-      # not release-please's, so it can be added to the ruleset's required checks
-      # without leaving ordinary pull requests waiting on a check that never reports.
       - name: Decide whether this run has anything to do
         id: scope
         env:
@@ -63,10 +61,6 @@ jobs:
         with:
           node-version: "22"
 
-      # The merge is attributed to the release bot App rather than to GITHUB_TOKEN.
-      # A push made with GITHUB_TOKEN does not trigger workflows, so release-please
-      # would never run on the merge, never cut the tag, and production would never
-      # deploy. Changing this token silently breaks the release chain.
       - name: Generate App token
         id: app-token
         if: steps.scope.outputs.applies == 'true'
@@ -96,8 +90,6 @@ jobs:
             exit 0
           fi
 
-          # The gate reasons about what is on main, not about this branch's diff, so a
-          # branch merely named like release-please's must not be trusted with it.
           FACTS=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$CANDIDATE" \
             --jq '{author: .user.login, head: .head.ref, state: .state}')
           AUTHOR=$(echo "$FACTS" | jq -r .author)
@@ -122,11 +114,6 @@ jobs:
           PR: ${{ steps.pr.outputs.number }}
         run: node "$GATE_SCRIPT" "$PR"
 
-# Arming is only safe once this job's own context is a required check, because
-      # GitHub's auto-merge waits solely for the release branch's checks and the ruleset
-      # does not require branches to be up to date. Rather than trusting the two settings
-      # to be changed in the right order, the job reads the ruleset and refuses to arm
-      # when its own check is not required. Unreadable rulesets count as not required.
       - name: Confirm this gate is a required check
         id: required
         if: steps.gate.outputs.ok == 'true' && vars.RELEASE_AUTO_MERGE_ARM == 'true' && !inputs.dry_run
@@ -135,9 +122,6 @@ jobs:
           DEFAULT_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.number }}
         run: |
-          # Reading repository rulesets needs a permission the release bot App may not
-          # carry, so try the workflow token as well before giving up. Either succeeding
-          # is enough: this is a read of repository configuration, not a write.
           IDS=""
           READER=""
           for CANDIDATE in app default; do
@@ -180,6 +164,7 @@ jobs:
           fi
 
       - name: Arm the merge
+        id: arm
         if: steps.required.outputs.required == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -188,30 +173,57 @@ jobs:
           STATUS=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json mergeStateStatus --jq .mergeStateStatus)
           if [ "$STATUS" = "CLEAN" ]; then
             gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash
+            echo "result=merged" >> "$GITHUB_OUTPUT"
             echo "Merged #$PR directly; its required checks were already green." >> "$GITHUB_STEP_SUMMARY"
           else
             gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --auto
+            echo "result=auto" >> "$GITHUB_OUTPUT"
             echo "Auto-merge armed on #$PR (merge state $STATUS)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # A scheduled run's check attaches to main's SHA, not the release branch head, so
-      # it cannot turn a red required check green on its own. When a scheduled run finds
-      # the release now acceptable, it re-runs the pull request's own gate run, which
-      # re-reads live state and reports against the head SHA.
       - name: Re-evaluate the pull request check after a scheduled recovery
-        if: github.event_name != 'pull_request' && steps.gate.outputs.ok == 'true' && !inputs.dry_run
+        if: steps.arm.outputs.result == 'auto' && github.event_name != 'pull_request'
+        continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          CHECKS_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.number }}
         run: |
-          HEAD_SHA=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
-          RUN=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "Auto-merge Release" \
-            --event pull_request --limit 50 --json databaseId,headSha,conclusion \
-            --jq "[.[] | select(.headSha == \"$HEAD_SHA\" and .conclusion == \"failure\")] | .[0].databaseId // empty")
-          if [ -n "$RUN" ]; then
-            gh run rerun "$RUN" --repo "$GITHUB_REPOSITORY" || true
-            echo "Re-ran gate run $RUN so the required check is re-evaluated on $HEAD_SHA." >> "$GITHUB_STEP_SUMMARY"
+          trap 'echo "::warning::The gate recheck for #$PR failed; nothing was disarmed and the next run tries again."; echo "Gate recheck for #$PR failed; nothing was disarmed and the next run tries again." >> "$GITHUB_STEP_SUMMARY"' ERR
+          FACTS=$(GH_TOKEN="$APP_TOKEN" gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state,mergeStateStatus,headRefOid,labels)
+          STATE=$(echo "$FACTS" | jq -r .state)
+          MERGE_STATE=$(echo "$FACTS" | jq -r .mergeStateStatus)
+          HEAD_SHA=$(echo "$FACTS" | jq -r .headRefOid)
+          LABELLED=$(echo "$FACTS" | jq -r --arg label "$RECHECK_LABEL" 'any(.labels[]; .name == $label)')
+          if [ "$STATE" != "OPEN" ] || [ "$MERGE_STATE" = "DIRTY" ]; then
+            echo "No recheck for #$PR: state $STATE, merge state $MERGE_STATE." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+
+          CHECK_NAME=$(jq -rn --arg name "$GATE_CONTEXT" '$name | @uri')
+          LATEST=$(GH_TOKEN="$CHECKS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=$CHECK_NAME&per_page=100" \
+            --jq '.check_runs | sort_by(.id) | last | {status: (.status // "missing"), conclusion: (.conclusion // "")}')
+          CHECK_STATUS=$(echo "$LATEST" | jq -r .status)
+          CONCLUSION=$(echo "$LATEST" | jq -r .conclusion)
+          if [ "$CHECK_STATUS" != "completed" ] && [ "$CHECK_STATUS" != "missing" ]; then
+            echo "No recheck for #$PR: the gate check on $HEAD_SHA is $CHECK_STATUS." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          case "$CONCLUSION" in
+            success|neutral|skipped)
+              echo "No recheck for #$PR: the gate check on $HEAD_SHA already reports $CONCLUSION." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+
+          if [ "$LABELLED" = "true" ]; then
+            GH_TOKEN="$APP_TOKEN" gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/$RECHECK_LABEL" --silent
+            ACTION="Removed"
+          else
+            GH_TOKEN="$APP_TOKEN" gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR/labels" -f "labels[]=$RECHECK_LABEL" --silent
+            ACTION="Added"
+          fi
+          echo "$ACTION '$RECHECK_LABEL' on #$PR so the gate check re-evaluates $HEAD_SHA (last result: ${CONCLUSION:-none})." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Hold the release for a human
         if: steps.gate.outputs.ok == 'false' && !inputs.dry_run
@@ -229,7 +241,6 @@ jobs:
               | gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file -
           fi
 
-      # A crash between evaluating and arming must never leave a previous arming live.
       - name: Disarm if this run failed
         if: failure() && steps.pr.outputs.number != ''
         env:
