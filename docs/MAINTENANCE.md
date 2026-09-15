@@ -102,8 +102,12 @@ Releases come from release-please. Nobody pushes version tags by hand.
 2. `auto-merge-release.yml` evaluates the release PR on pull request events, every 30 minutes, and on manual dispatch.
    It arms squash auto-merge only when every commit since the previous release is vouched for, by a `Brief-Verified:`
    trailer, by the `brief-verified` label on its pull request, or by being release-please's own commit, and the release
-   is not a major bump. Otherwise the release PR waits for a maintainer. The `Release auto-merge gate` check runs on every
-   pull request and passes at once on the ones that are not release PRs.
+   is not a major bump. Otherwise the release PR waits for a maintainer. If a scheduled or dispatched run arms the
+   release PR while the newest `Release auto-merge gate` check on its head is red, cancelled or missing, the run adds
+   the `release-gate-recheck` label to the PR, or removes it if it is already there. The label event starts a new gate
+   run on the head. The label has no other purpose. If the recheck step itself fails, the run logs a warning without
+   disarming, and the next run tries again. The `Release auto-merge gate` check runs on every pull request and passes
+   at once on the ones that are not release PRs.
 3. Merging the release PR creates the tag and the GitHub release. The `Publish to npm` job then runs the tests, builds,
    checks that the tag matches `package.json`, and publishes with `npm publish --provenance --access public`.
 
