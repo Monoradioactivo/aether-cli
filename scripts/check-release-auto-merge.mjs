@@ -9,6 +9,7 @@ import {
   classifyCommit,
   DEFAULT_LABEL_ACTOR_ALLOWLIST,
   DEFAULT_RELEASE_BOT_LOGIN,
+  DEFAULT_RENOVATE_BOT_LOGIN,
   DEFAULT_VERIFIED_LABEL,
   hasVerifiedTrailer,
   pickLatestTestConclusion,
@@ -18,6 +19,7 @@ import {
 const REPO = process.env.GITHUB_REPOSITORY;
 const LABEL = process.env.VERIFIED_LABEL || DEFAULT_VERIFIED_LABEL;
 const RELEASE_BOT_LOGIN = process.env.RELEASE_BOT_LOGIN || DEFAULT_RELEASE_BOT_LOGIN;
+const RENOVATE_BOT_LOGIN = process.env.RENOVATE_BOT_LOGIN || DEFAULT_RENOVATE_BOT_LOGIN;
 const configuredLabelActors = (process.env.VERIFIED_LABEL_ACTORS || "")
   .split(",")
   .map((actor) => actor.trim())
@@ -181,7 +183,8 @@ function resolvePullRequest(sha, commit) {
       const labels = pr.labels;
       const commitHasTrailer = hasVerifiedTrailer(commit && commit.message != null ? commit.message : "");
       const labelVouch = !commitHasTrailer && Array.isArray(labels) && labels.includes(LABEL);
-      const needsTest = commitHasTrailer || labelVouch;
+      const renovateVouch = !commitHasTrailer && !labelVouch && pr.author === RENOVATE_BOT_LOGIN;
+      const needsTest = commitHasTrailer || labelVouch || renovateVouch;
       resolved = { number: pr.number, labels, author: pr.author };
       if (needsTest) {
         if (labelVouch) {
@@ -249,7 +252,7 @@ function main() {
     }
     rangeTruncated = range.truncated;
     commits = range.commits.map((c) =>
-      classifyCommit(c, (sha) => resolvePullRequest(sha, c), LABEL, LABEL_ACTORS, RELEASE_BOT_LOGIN),
+      classifyCommit(c, (sha) => resolvePullRequest(sha, c), LABEL, LABEL_ACTORS, RELEASE_BOT_LOGIN, RENOVATE_BOT_LOGIN),
     );
   }
 
