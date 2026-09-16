@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.1...v0.9.2) (2026-09-16)
+
+
+### Bug Fixes
+
+* **ci:** count Brief-Verified across Co-authored-by trailers ([#151](https://github.com/Monoradioactivo/aether-cli/issues/151)) ([5a13755](https://github.com/Monoradioactivo/aether-cli/commit/5a13755da9882fc38923b0fa7ff5b39676e53644))
+* **cli:** print the yargs parse-failure message above usage ([#149](https://github.com/Monoradioactivo/aether-cli/issues/149)) ([c6d6914](https://github.com/Monoradioactivo/aether-cli/commit/c6d6914a64f54a878966c31b1e828d819cd24fb7))
+
 ## [0.9.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.0...v0.9.1) (2026-09-11)
 
 
