@@ -113,6 +113,13 @@ describe("command-parser", () => {
     return { cmd, parseFailed };
   }
 
+  function errorOutput(): string {
+    return (console.error as jest.Mock).mock.calls
+      .flat()
+      .map((value) => String(value))
+      .join("\n");
+  }
+
   describe("parseFailed flag", () => {
     it("is false for a valid command", () => {
       const { cmd, parseFailed } = parseArgsWithState(["app", "list"]);
@@ -144,6 +151,7 @@ describe("command-parser", () => {
       const { cmd, parseFailed } = parseArgsWithState([]);
       expect(cmd).toBeUndefined();
       expect(parseFailed).toBe(false);
+      expect(errorOutput()).not.toContain("Not enough non-option arguments");
     });
 
     it("is reset between invocations via isolateModules", () => {
@@ -539,6 +547,30 @@ describe("command-parser", () => {
     it("'login --accessKey' with no value fails the parse instead of logging in interactively", () => {
       const { parseFailed } = parseArgsWithState(["login", "--accessKey"]);
       expect(parseFailed).toBe(true);
+    });
+
+    it("'login --accessKey' with no value prints that the flag needs a value", () => {
+      const { parseFailed } = parseArgsWithState(["login", "--accessKey"]);
+      expect(parseFailed).toBe(true);
+      const printed = errorOutput();
+      expect(printed).toContain("Not enough arguments following: accessKey");
+      expect(printed.split("Not enough arguments following: accessKey").length - 1).toBe(1);
+    });
+
+    it("parse-failure output does not include an --accessKey value", () => {
+      const secret = "SUPERSECRET_probe_value";
+      const { parseFailed } = parseArgsWithState(["login", `--accessKey=${secret}`, "ExtraArg"]);
+      expect(parseFailed).toBe(true);
+      const printed = errorOutput();
+      expect(printed).toContain("Too many non-option arguments");
+      expect(printed).not.toContain(secret);
+    });
+
+    it("parse-failure output does not include a --key value", () => {
+      const secret = "DEPLOYKEY_probe_value";
+      const { parseFailed } = parseArgsWithState(["deployment", "add", "MyApp", "Staging", `--key=${secret}`, "ExtraArg"]);
+      expect(parseFailed).toBe(true);
+      expect(errorOutput()).not.toContain(secret);
     });
 
     it("'login --serverUrl <url>' normalises the URL", () => {
