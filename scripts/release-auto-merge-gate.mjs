@@ -3,14 +3,23 @@ export const REQUIRED_TEST_CHECK = "Node 22";
 export const REQUIRED_TEST_APP = "github-actions";
 export const DEFAULT_LABEL_ACTOR_ALLOWLIST = ["Monoradioactivo"];
 export const DEFAULT_RELEASE_BOT_LOGIN = "aetherpush-release-bot[bot]";
+export const DEFAULT_RENOVATE_BOT_LOGIN = "renovate[bot]";
 
 const TRAILER_LINE = /^Brief-Verified:[ \t]*\S/i;
 const TRAILER_SHAPE = /^[A-Za-z][A-Za-z0-9-]*:[ \t]/;
+const CONVENTIONAL_SUBJECT_KEY =
+  /^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)(\([^)]*\))?!?$/i;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const RELEASE_SUBJECT = /^chore\(main\): release /;
 
 export function subjectOf(message) {
   return String(message).split("\n")[0];
+}
+
+function isTrailerLine(line) {
+  if (!TRAILER_SHAPE.test(line)) return false;
+  const key = line.slice(0, line.indexOf(":")).trim();
+  return !CONVENTIONAL_SUBJECT_KEY.test(key);
 }
 
 export function trailerBlockOf(message) {
@@ -19,8 +28,15 @@ export function trailerBlockOf(message) {
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   if (paragraphs.length === 0) return [];
-  const last = paragraphs[paragraphs.length - 1].split("\n").map((l) => l.trim());
-  return last.every((line) => TRAILER_SHAPE.test(line)) ? last : [];
+  const lines = [];
+  for (let i = paragraphs.length - 1; i >= 0; i--) {
+    const paragraphLines = paragraphs[i].split("\n").map((l) => l.trim());
+    if (!paragraphLines.every((line) => isTrailerLine(line))) {
+      break;
+    }
+    lines.unshift(...paragraphLines);
+  }
+  return lines;
 }
 
 export function hasVerifiedTrailer(message) {
@@ -61,6 +77,7 @@ export function classifyCommit(
   label = DEFAULT_VERIFIED_LABEL,
   allowedLabelActors = DEFAULT_LABEL_ACTOR_ALLOWLIST,
   releaseBotLogin = DEFAULT_RELEASE_BOT_LOGIN,
+  renovateBotLogin = DEFAULT_RENOVATE_BOT_LOGIN,
 ) {
   const sha = String(commit.sha).slice(0, 7);
   const subject = subjectOf(commit.message);
@@ -94,16 +111,24 @@ export function classifyCommit(
     }
   }
 
+  const labelVia = `${label} label`;
+  const renovateAuthored =
+    !resolved.authorUnread && resolved.author != null && String(resolved.author) === renovateBotLogin;
   const via = hasTrailer
     ? "Brief-Verified trailer"
     : labels.includes(label)
-      ? `${label} label`
-      : null;
+      ? labelVia
+      : renovateAuthored
+        ? "Renovate pull request"
+        : null;
   if (!via) {
+    if (resolved.authorUnread) {
+      return { sha, pr: number, subject, blessed: false, via: null, unresolved: true };
+    }
     return { sha, pr: number, subject, blessed: false, via: null };
   }
 
-  if (!hasTrailer) {
+  if (via === labelVia) {
     if (resolved.labelActorUnread || !Array.isArray(allowedLabelActors)) {
       return { sha, pr: number, subject, blessed: false, via: null, unresolved: true };
     }
