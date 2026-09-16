@@ -39,6 +39,18 @@ export function showHelp(showRootDescription?: boolean): void {
   }
 }
 
+function isUserFacingParseMessage(msg: string): boolean {
+  return msg.length > 0 && !msg.startsWith("Argument check failed");
+}
+
+function reportParseFailure(msg: string, showRootDescription?: boolean): void {
+  parseFailed = true;
+  if (!wasHelpShown && isUserFacingParseMessage(msg) && process.argv.slice(2).length > 0) {
+    console.error(chalk.red(msg));
+  }
+  showHelp(showRootDescription);
+}
+
 const ACCESS_KEY_DASHBOARD_NOTE =
   "Access keys are created in the dashboard under Account > CLI access keys; this command is refused from a CLI session.";
 const API_KEY_DASHBOARD_NOTE = "API keys are created in the dashboard under API Keys; this command is refused from a CLI session.";
@@ -230,10 +242,9 @@ function addCommonConfiguration(yargs: yargs.Argv): void {
         "Auto-enrich release/promote/patch descriptions with CI metadata when running in a supported CI provider. Pass --no-ci-metadata to opt out.",
       type: "boolean",
     })
-    .fail((_msg: string) => {
-      parseFailed = true;
-      showHelp();
-    }); // Suppress the default error message.
+    .fail((msg: string) => {
+      reportParseFailure(msg);
+    });
 }
 
 function appList(commandName: string, yargs: yargs.Argv): void {
@@ -1159,10 +1170,9 @@ yargs
   .alias("v", "version")
   .version(packageJson.version)
   .wrap(/*columnLimit*/ null)
-  .fail((_msg: string) => {
-    parseFailed = true;
-    showHelp(/*showRootDescription*/ true);
-  }).argv; // Suppress the default error message.
+  .fail((msg: string) => {
+    reportParseFailure(msg, true);
+  }).argv;
 
 export function createCommand(): cli.ICommand {
   let cmd: cli.ICommand;
