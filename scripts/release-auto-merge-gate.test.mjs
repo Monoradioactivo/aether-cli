@@ -23,6 +23,12 @@ const trailerPr = (number, testConclusion = "success") => () => ({
   labels: [],
   testConclusion,
 });
+const renovatePr = (number, testConclusion = "success") => () => ({
+  number,
+  labels: [],
+  author: "renovate[bot]",
+  testConclusion,
+});
 const testRun = (conclusion, completed_at, overrides = {}) => ({
   name: REQUIRED_TEST_CHECK,
   app: "github-actions",
@@ -330,6 +336,106 @@ test("a non-bot release-shaped commit can still bless through the trailer path",
   const result = classifyCommit(
     { sha: "a3456c9000", message: "chore(main): release 3.4.4\n\nBrief-Verified: a-brief" },
     humanRelease,
+  );
+  assert.equal(result.blessed, true);
+  assert.equal(result.via, "Brief-Verified trailer");
+});
+
+test("a Renovate pull request is blessed on its author once its test passed", () => {
+  const result = classifyCommit(
+    { sha: "b1234ab000", message: "chore(deps): update dependency cocoapods to v1.17.0" },
+    renovatePr(61),
+  );
+  assert.equal(result.blessed, true);
+  assert.equal(result.via, "Renovate pull request");
+});
+
+test("a Renovate pull request whose test failed is refused", () => {
+  const result = classifyCommit(
+    { sha: "b1234ab000", message: "fix(deps): update weekly updates" },
+    renovatePr(49, "failure"),
+  );
+  assert.equal(result.blessed, false);
+  assert.equal(result.missingTest, true);
+  assert.equal(result.testConclusion, "failure");
+});
+
+test("a Renovate pull request with no test conclusion is refused", () => {
+  const result = classifyCommit(
+    { sha: "b1234ab000", message: "fix(deps): update weekly updates" },
+    () => ({ number: 49, labels: [], author: "renovate[bot]" }),
+  );
+  assert.equal(result.blessed, false);
+  assert.equal(result.missingTest, true);
+  assert.equal(result.testConclusion, "absent");
+});
+
+test("a bump-shaped commit from another author is not blessed via the Renovate path", () => {
+  const result = classifyCommit(
+    { sha: "b1234ab000", message: "chore(deps): update dependency cocoapods to v1.17.0" },
+    () => ({ number: 61, labels: [], author: "dependabot[bot]", testConclusion: "success" }),
+  );
+  assert.equal(result.blessed, false);
+  assert.equal(result.via, null);
+});
+
+test("a Renovate pull request carrying the label still answers to the label allowlist", () => {
+  const refused = classifyCommit(
+    { sha: "b1234ab000", message: "fix(deps): update weekly updates" },
+    () => ({
+      number: 49,
+      labels: ["brief-verified"],
+      author: "renovate[bot]",
+      labelActor: "a-stranger",
+      testConclusion: "success",
+    }),
+  );
+  assert.equal(refused.blessed, false);
+  assert.equal(refused.refusedLabel, true);
+  assert.equal(refused.labelActor, "a-stranger");
+});
+
+test("an unreadable author with no other vouch fails closed as unresolved", () => {
+  const result = classifyCommit(
+    { sha: "b1234ab000", message: "fix(deps): update weekly updates" },
+    () => ({ number: 49, labels: [], authorUnread: true }),
+  );
+  assert.equal(result.blessed, false);
+  assert.equal(result.unresolved, true);
+});
+
+test("the Renovate author login is configurable", () => {
+  const result = classifyCommit(
+    { sha: "b1234ab000", message: "fix(deps): update weekly updates" },
+    () => ({ number: 49, labels: [], author: "renovate-self-hosted[bot]", testConclusion: "success" }),
+    undefined,
+    undefined,
+    undefined,
+    "renovate-self-hosted[bot]",
+  );
+  assert.equal(result.blessed, true);
+  assert.equal(result.via, "Renovate pull request");
+});
+
+test("an allowlisted label on a Renovate pull request is the vouch that is reported", () => {
+  const result = classifyCommit(
+    { sha: "b1234ab000", message: "fix(deps): update weekly updates" },
+    () => ({
+      number: 49,
+      labels: ["brief-verified"],
+      author: "renovate[bot]",
+      labelActor: "Monoradioactivo",
+      testConclusion: "success",
+    }),
+  );
+  assert.equal(result.blessed, true);
+  assert.equal(result.via, "brief-verified label");
+});
+
+test("a trailer on a Renovate pull request outranks the author path", () => {
+  const result = classifyCommit(
+    { sha: "b1234ab000", message: "fix(deps): update weekly updates\n\nBrief-Verified: a-brief" },
+    renovatePr(49),
   );
   assert.equal(result.blessed, true);
   assert.equal(result.via, "Brief-Verified trailer");
