@@ -6,11 +6,19 @@ export const DEFAULT_RELEASE_BOT_LOGIN = "aetherpush-release-bot[bot]";
 
 const TRAILER_LINE = /^Brief-Verified:[ \t]*\S/i;
 const TRAILER_SHAPE = /^[A-Za-z][A-Za-z0-9-]*:[ \t]/;
+const CONVENTIONAL_SUBJECT_KEY =
+  /^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)(\([^)]*\))?!?$/i;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const RELEASE_SUBJECT = /^chore\(main\): release /;
 
 export function subjectOf(message) {
   return String(message).split("\n")[0];
+}
+
+function isTrailerLine(line) {
+  if (!TRAILER_SHAPE.test(line)) return false;
+  const key = line.slice(0, line.indexOf(":")).trim();
+  return !CONVENTIONAL_SUBJECT_KEY.test(key);
 }
 
 export function trailerBlockOf(message) {
@@ -19,8 +27,15 @@ export function trailerBlockOf(message) {
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   if (paragraphs.length === 0) return [];
-  const last = paragraphs[paragraphs.length - 1].split("\n").map((l) => l.trim());
-  return last.every((line) => TRAILER_SHAPE.test(line)) ? last : [];
+  const lines = [];
+  for (let i = paragraphs.length - 1; i >= 0; i--) {
+    const paragraphLines = paragraphs[i].split("\n").map((l) => l.trim());
+    if (!paragraphLines.every((line) => isTrailerLine(line))) {
+      break;
+    }
+    lines.unshift(...paragraphLines);
+  }
+  return lines;
 }
 
 export function hasVerifiedTrailer(message) {

@@ -56,6 +56,42 @@ test("a trailer stranded mid-body by a squash concatenation does not bless the c
   assert.equal(hasVerifiedTrailer(concatenated), false);
 });
 
+test("trailing Co-authored-by paragraphs join the trailer block", () => {
+  const withCoAuthor = [
+    "fix(api): reject unpaired surrogates in register names (#376)",
+    "",
+    "Register still counted name length in code points, so a lone",
+    "UTF-16 surrogate passed and node-pg stored U+FFFD.",
+    "",
+    "Brief-Verified: server-register-unpaired-surrogate",
+    "",
+    "Co-authored-by: Cursor <cursoragent@cursor.com>",
+  ].join("\n");
+  assert.equal(hasVerifiedTrailer(withCoAuthor), true);
+  assert.deepEqual(trailerBlockOf(withCoAuthor), [
+    "Brief-Verified: server-register-unpaired-surrogate",
+    "Co-authored-by: Cursor <cursoragent@cursor.com>",
+  ]);
+});
+
+test("a conventional subject between trailers does not bridge a stranded Brief-Verified", () => {
+  const bridged = [
+    "fix: first (#1)",
+    "",
+    "first body",
+    "",
+    "Brief-Verified: a-brief-from-first",
+    "",
+    "feat: second (#2)",
+    "",
+    "Co-authored-by: Cursor <cursoragent@cursor.com>",
+  ].join("\n");
+  assert.equal(hasVerifiedTrailer(bridged), false);
+  assert.deepEqual(trailerBlockOf(bridged), [
+    "Co-authored-by: Cursor <cursoragent@cursor.com>",
+  ]);
+});
+
 test("a paragraph that is not a trailer block is not treated as one", () => {
   assert.deepEqual(trailerBlockOf("subject\n\njust prose here"), []);
   assert.deepEqual(trailerBlockOf("subject\n\nRefs: 1\nBrief-Verified: x"), ["Refs: 1", "Brief-Verified: x"]);
