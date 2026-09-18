@@ -799,8 +799,7 @@ describe("command-executor", () => {
       expect(mockSdkMethods.clearDeploymentHistory).toHaveBeenCalledWith("MyApp", "Prod");
     });
 
-    it("deploymentHistory fetches account + history + metrics in parallel", async () => {
-      mockSdkMethods.getAccountInfo.mockResolvedValue({ email: "user@example.com" });
+    it("deploymentHistory fetches history + metrics in parallel", async () => {
       mockSdkMethods.getDeploymentHistory.mockResolvedValue([
         {
           label: "v1",
@@ -819,9 +818,8 @@ describe("command-executor", () => {
         appName: "MyApp",
         deploymentName: "Prod",
         format: "json",
-        displayAuthor: false,
       });
-      expect(mockSdkMethods.getAccountInfo).toHaveBeenCalled();
+      expect(mockSdkMethods.getAccountInfo).not.toHaveBeenCalled();
       expect(mockSdkMethods.getDeploymentHistory).toHaveBeenCalledWith("MyApp", "Prod");
       expect(mockSdkMethods.getDeploymentMetrics).toHaveBeenCalledWith("MyApp", "Prod");
     });
@@ -1785,7 +1783,6 @@ describe("command-executor", () => {
         appVersion: "1.0.0",
         blobUrl: "https://cdn.example.com/blob/v3",
         description: "first release",
-        releasedBy: "adrian@aetherpush.com",
         releaseMethod: "Upload",
         uploadTime: 1714867200000,
         rollout: 100,
@@ -1853,7 +1850,6 @@ describe("command-executor", () => {
           appVersion: "1.0.0",
           blobUrl: "https://cdn.example.com/blob/v3",
           description: "first release",
-          releasedBy: "adrian@aetherpush.com",
           releaseMethod: "Upload",
           uploadTime: 1714867200000,
           rollout: 100,
@@ -2019,7 +2015,6 @@ describe("command-executor", () => {
           appVersion: "1.0.0",
           blobUrl: "https://cdn.example.com/blob/v3",
           description: "first release",
-          releasedBy: "adrian@aetherpush.com",
           releaseMethod: "Upload",
           uploadTime: 1714867200000,
           rollout: 100,

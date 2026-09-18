@@ -169,7 +169,6 @@ export interface IDeploymentHistoryCommand extends ICommand {
   appName: string;
   deploymentName: string;
   format: string;
-  displayAuthor: boolean;
 }
 
 export interface IDeploymentMetricsCommand extends ICommand {

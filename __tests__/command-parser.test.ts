@@ -460,23 +460,17 @@ describe("command-parser", () => {
       expect(cmd.newDeploymentName).toBe("New");
     });
 
-    it("'deployment history <app> <deployment>' defaults format=table, displayAuthor=false", () => {
+    it("'deployment history <app> <deployment>' defaults format=table", () => {
       const cmd = parseArgs(["deployment", "history", "MyApp", "Prod"]);
       expect(cmd.type).toBe(CommandType.deploymentHistory);
       expect(cmd.appName).toBe("MyApp");
       expect(cmd.deploymentName).toBe("Prod");
       expect(cmd.format).toBe("table");
-      expect(cmd.displayAuthor).toBe(false);
     });
 
     it("'deployment h' (alias) maps to deploymentHistory", () => {
       const cmd = parseArgs(["deployment", "h", "MyApp", "Prod"]);
       expect(cmd.type).toBe(CommandType.deploymentHistory);
-    });
-
-    it("'deployment history' accepts --displayAuthor / -a", () => {
-      const cmd = parseArgs(["deployment", "history", "MyApp", "Prod", "--displayAuthor"]);
-      expect(cmd.displayAuthor).toBe(true);
     });
 
     it("'deployment metrics <app> <deployment>' defaults format=table and sends no date range", () => {
