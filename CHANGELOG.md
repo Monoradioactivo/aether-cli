@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.2...v0.9.3) (2026-09-18)
+
+
+### Bug Fixes
+
+* **cli:** remove no-op --displayAuthor and releasedBy JSON key ([#154](https://github.com/Monoradioactivo/aether-cli/issues/154)) ([af0d84e](https://github.com/Monoradioactivo/aether-cli/commit/af0d84ee47761f874289aa432a492735daedb7d5))
+
 ## [0.9.2](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.1...v0.9.2) (2026-09-16)
 
 
