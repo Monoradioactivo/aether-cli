@@ -600,10 +600,9 @@ function deploymentHistory(command: cli.IDeploymentHistoryCommand): Promise<void
   throwForInvalidOutputFormat(command.format);
 
   return Promise.all([
-    sdk.getAccountInfo(),
     sdk.getDeploymentHistory(command.appName, command.deploymentName),
     sdk.getDeploymentMetrics(command.appName, command.deploymentName),
-  ]).then(([account, deploymentHistory, metrics]) => {
+  ]).then(([deploymentHistory, metrics]) => {
     const totalActive: number = getTotalActiveFromDeploymentMetrics(metrics);
     deploymentHistory.forEach((packageObject: Package) => {
       if (metrics[packageObject.label]) {
@@ -616,7 +615,7 @@ function deploymentHistory(command: cli.IDeploymentHistoryCommand): Promise<void
         };
       }
     });
-    printDeploymentHistory(command, <Package[]>deploymentHistory, account.email);
+    printDeploymentHistory(command, <Package[]>deploymentHistory);
   });
 }
 
@@ -1159,16 +1158,11 @@ function printDeploymentList(command: cli.IDeploymentListCommand, deployments: D
   }
 }
 
-function printDeploymentHistory(command: cli.IDeploymentHistoryCommand, deploymentHistory: Package[], currentUserEmail: string): void {
+function printDeploymentHistory(command: cli.IDeploymentHistoryCommand, deploymentHistory: Package[]): void {
   if (command.format === "json") {
     printJson(deploymentHistory);
   } else if (command.format === "table") {
-    const headers = ["Label", "Release Time", "App Version", "Mandatory"];
-    if (command.displayAuthor) {
-      headers.push("Released By");
-    }
-
-    headers.push("Description", "Install Metrics");
+    const headers = ["Label", "Release Time", "App Version", "Mandatory", "Description", "Install Metrics"];
 
     printTable(headers, (dataSource: any[]) => {
       deploymentHistory.forEach((packageObject: Package) => {
@@ -1186,18 +1180,14 @@ function printDeploymentHistory(command: cli.IDeploymentHistoryCommand, deployme
           releaseTime += "\n" + chalk.magenta(`(${releaseSource})`).toString();
         }
 
-        let row: string[] = [packageObject.label, releaseTime, packageObject.appVersion, packageObject.isMandatory ? "Yes" : "No"];
-        if (command.displayAuthor) {
-          let releasedBy: string = packageObject.releasedBy ? packageObject.releasedBy : "";
-          if (currentUserEmail && releasedBy === currentUserEmail) {
-            releasedBy = "You";
-          }
-
-          row.push(releasedBy);
-        }
-
-        row.push(packageObject.description ? wordwrap(30)(packageObject.description) : "");
-        row.push(getPackageMetricsString(packageObject) + (packageObject.isDisabled ? `\n${chalk.green("Disabled:")} Yes` : ""));
+        let row: string[] = [
+          packageObject.label,
+          releaseTime,
+          packageObject.appVersion,
+          packageObject.isMandatory ? "Yes" : "No",
+          packageObject.description ? wordwrap(30)(packageObject.description) : "",
+          getPackageMetricsString(packageObject) + (packageObject.isDisabled ? `\n${chalk.green("Disabled:")} Yes` : ""),
+        ];
         if (packageObject.isDisabled) {
           row = row.map((cellContents: string) => applyChalkSkippingLineBreaks(cellContents, (<any>chalk).dim));
         }
@@ -1304,9 +1294,6 @@ function getPackageString(packageObject: Package): string {
     "\n" +
     chalk.green("Release Time: ") +
     formatDate(packageObject.uploadTime) +
-    "\n" +
-    chalk.green("Released By: ") +
-    (packageObject.releasedBy ? packageObject.releasedBy : "") +
     (packageObject.description ? wordwrap(70)("\n" + chalk.green("Description: ") + packageObject.description) : "");
 
   if (packageObject.isDisabled) {

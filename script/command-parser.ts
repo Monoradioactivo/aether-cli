@@ -458,13 +458,6 @@ function deploymentHistory(commandName: string, yargs: yargs.Argv): void {
       demand: false,
       description: 'Output format to display the release history with ("json" or "table")',
       type: "string",
-    })
-    .option("displayAuthor", {
-      alias: "a",
-      default: false,
-      demand: false,
-      description: "Specifies whether to display the release author",
-      type: "boolean",
     });
 
   addCommonConfiguration(yargs);
@@ -1489,7 +1482,6 @@ export function createCommand(): cli.ICommand {
               deploymentHistoryCommand.appName = arg2;
               deploymentHistoryCommand.deploymentName = arg3;
               deploymentHistoryCommand.format = argv["format"] as any;
-              deploymentHistoryCommand.displayAuthor = argv["displayAuthor"] as any;
             }
             break;
 

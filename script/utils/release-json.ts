@@ -10,7 +10,6 @@ export function formatReleaseJson(pkg: Package): string {
     appVersion: pkg.appVersion,
     blobUrl: pkg.blobUrl,
     description: pkg.description,
-    releasedBy: pkg.releasedBy,
     releaseMethod: pkg.releaseMethod,
     uploadTime: pkg.uploadTime,
     rollout: pkg.rollout,

@@ -27,13 +27,33 @@ describe("formatReleaseJson", () => {
       appVersion: "1.0.0",
       blobUrl: "https://cdn.example.com/blob/abc",
       description: "Bug fixes [ci=github sha=abc1234]",
-      releasedBy: "adrian@aetherpush.com",
       releaseMethod: "Upload",
       uploadTime: 1714867200000,
       rollout: 100,
       isMandatory: false,
       isDisabled: false,
     });
+  });
+
+  it("never emits releasedBy even when the source package carries it", () => {
+    const pkg: Package = {
+      label: "v3",
+      packageHash: "9b8c7d6e",
+      size: 100,
+      appVersion: "1.0.0",
+      blobUrl: "https://cdn.example.com/blob/abc",
+      releasedBy: "adrian@aetherpush.com",
+    } as any;
+
+    const parsed = JSON.parse(formatReleaseJson(pkg));
+    expect(parsed).toEqual({
+      label: "v3",
+      packageHash: "9b8c7d6e",
+      size: 100,
+      appVersion: "1.0.0",
+      blobUrl: "https://cdn.example.com/blob/abc",
+    });
+    expect(Object.prototype.hasOwnProperty.call(parsed, "releasedBy")).toBe(false);
   });
 
   it("drops fields that are undefined on the source package", () => {
