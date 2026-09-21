@@ -34,15 +34,6 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Keep release PR up to date with main
-        if: steps.release.outputs.pr
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR: ${{ steps.release.outputs.pr }}
-        run: |
-          PR_NUMBER=$(echo "$PR" | jq -r '.number')
-          gh pr update-branch "$PR_NUMBER" || true
-
   publish:
     name: Publish to npm
     needs: release-please

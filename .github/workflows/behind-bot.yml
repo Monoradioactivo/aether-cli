@@ -1,0 +1,67 @@
+name: Behind bot
+
+"on":
+  workflow_run:
+    workflows:
+      - Release Please
+      - CI
+    types:
+      - completed
+  pull_request_target:
+    types:
+      - auto_merge_enabled
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: behind-bot
+  cancel-in-progress: false
+
+env:
+  RELEASE_BRANCH_PREFIX: release-please--branches--main
+  RELEASE_BOT_LOGIN: aetherpush-release-bot[bot]
+
+jobs:
+  update:
+    name: Update the oldest armed behind pull request
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_repository.full_name == github.repository &&
+      ((github.event.workflow_run.name == 'Release Please' && github.event.workflow_run.event == 'push') ||
+      (github.event.workflow_run.name == 'CI' &&
+      (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Update the oldest armed behind pull request
+        env:
+          READ_TOKEN: ${{ github.token }}
+          UPDATE_TOKEN: ${{ steps.app-token.outputs.token }}
+          DISCORD_OPS_WEBHOOK_URL: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+        run: node scripts/behind-bot.mjs
