@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -282,7 +281,15 @@ function main() {
   writeOutput(verdict);
 }
 
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
-if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
-  main();
+const entry = process.argv[1];
+if (entry) {
+  let isCli = false;
+  try {
+    isCli = realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    isCli = entry === fileURLToPath(import.meta.url);
+  }
+  if (isCli) {
+    main();
+  }
 }
