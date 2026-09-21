@@ -63,5 +63,8 @@ jobs:
       - name: Release auto-merge gate tests
         run: node --test scripts/release-auto-merge-gate.test.mjs
 
+      - name: Behind bot tests
+        run: node --test scripts/behind-bot.test.mjs
+
       - name: Test
         run: npm test
