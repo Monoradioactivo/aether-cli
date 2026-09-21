@@ -114,6 +114,12 @@ jobs:
           PR: ${{ steps.pr.outputs.number }}
         run: node "$GATE_SCRIPT" "$PR"
 
+      - name: Require a verdict from the gate
+        if: steps.pr.outputs.number != '' && steps.gate.outputs.ok == ''
+        run: |
+          echo "::error::The gate step finished without writing a verdict, so no commit in this release has been vouched for. Nothing is armed or merged until it does."
+          exit 1
+
       - name: Confirm this gate is a required check
         id: required
         if: steps.gate.outputs.ok == 'true' && vars.RELEASE_AUTO_MERGE_ARM == 'true' && !inputs.dry_run
