@@ -72,8 +72,12 @@ function gateWorkflow() {
   return yaml.load(readFileSync(join(workflowsDir, "auto-merge-release.yml"), "utf8"));
 }
 
-function gateSteps() {
-  return gateWorkflow().jobs.gate.steps;
+function cloneGate() {
+  return structuredClone(gateWorkflow());
+}
+
+function gateSteps(doc = gateWorkflow()) {
+  return doc.jobs.gate.steps;
 }
 
 function indexOfStep(steps, name) {
@@ -82,6 +86,30 @@ function indexOfStep(steps, name) {
 
 function softensFailure(node) {
   return node["continue-on-error"] !== undefined;
+}
+
+const EXPECTED_REFUSE_IF =
+  "steps.gate.outputs.ok == 'false' && github.event_name != 'schedule'";
+
+function normalizeIf(condition) {
+  return String(condition ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function assertRefuseScheduleCarveOut(steps) {
+  const refuse = indexOfStep(steps, "Fail when the release is not accounted for");
+  assert.notEqual(refuse, -1, "the gate job has no 'Fail when the release is not accounted for' step");
+  assert.equal(
+    normalizeIf(steps[refuse].if),
+    EXPECTED_REFUSE_IF,
+    "the refuse step must fail closed on pull_request and dispatch while staying green on schedule. Doctrine pins the schedule carve-out (ci-release-gate-scheduled-hold-noise); dropping != 'schedule' reopens hold-noise email, and dropping the ok==false half greens an unaccounted release PR check.",
+  );
+  assert.match(
+    steps[refuse].run,
+    /^\s*exit 1\s*$/m,
+    "the refuse step keeps its if: but no longer exits 1, so a held release PR can report the required check green",
+  );
 }
 
 function readsVerdict(step) {
@@ -99,6 +127,7 @@ test("an absent verdict fails the job instead of reading as a satisfied check", 
   const refuse = indexOfStep(steps, "Fail when the release is not accounted for");
   assert.notEqual(refuse, -1, "the gate job has no 'Fail when the release is not accounted for' step");
   assert.ok(!softensFailure(steps[refuse]), "the step that reds an unaccounted release carries continue-on-error");
+  assertRefuseScheduleCarveOut(steps);
 });
 
 test("nothing above the steps waves the job through a failed verdict", () => {
@@ -141,4 +170,32 @@ test("a failed verdict check still reaches the step that drops a stale arm", () 
   const disarm = indexOfStep(steps, "Disarm if this run failed");
   assert.ok(disarm > verdict);
   assert.match(steps[disarm].if, /failure\(\)/);
+});
+
+test("the refuse step skips schedule and still fails closed on every other event", () => {
+  assertRefuseScheduleCarveOut(gateSteps());
+});
+
+test("a planted refuse if that reds schedule fails the schedule carve-out check", () => {
+  const doc = cloneGate();
+  const steps = gateSteps(doc);
+  const refuse = indexOfStep(steps, "Fail when the release is not accounted for");
+  steps[refuse].if = "steps.gate.outputs.ok == 'false'";
+  assert.throws(() => assertRefuseScheduleCarveOut(steps), /schedule carve-out|hold-noise|ok==false/);
+});
+
+test("a planted refuse if that never runs fails the schedule carve-out check", () => {
+  const doc = cloneGate();
+  const steps = gateSteps(doc);
+  const refuse = indexOfStep(steps, "Fail when the release is not accounted for");
+  steps[refuse].if = "false";
+  assert.throws(() => assertRefuseScheduleCarveOut(steps), /schedule carve-out|hold-noise|ok==false/);
+});
+
+test("a planted refuse run that no longer exits 1 fails the schedule carve-out check", () => {
+  const doc = cloneGate();
+  const steps = gateSteps(doc);
+  const refuse = indexOfStep(steps, "Fail when the release is not accounted for");
+  steps[refuse].run = 'echo "::error::The release contains commits this gate cannot vouch for."';
+  assert.throws(() => assertRefuseScheduleCarveOut(steps), /no longer exits 1|required check green/);
 });
