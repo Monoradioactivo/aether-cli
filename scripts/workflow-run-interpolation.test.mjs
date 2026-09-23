@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import yaml from "js-yaml";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -172,6 +174,31 @@ test("a failed verdict check still reaches the step that drops a stale arm", () 
   assert.match(steps[disarm].if, /failure\(\)/);
 });
 
+test("no step acts on the gate verdict without an explicit true or false", () => {
+  const steps = gateSteps();
+  const consumers = steps.filter(
+    (step) =>
+      typeof step.if === "string" &&
+      step.if.includes("steps.gate.outputs.ok") &&
+      step.name !== "Require a verdict from the gate",
+  );
+  assert.ok(consumers.length >= 3, "a step that acted on the verdict stopped naming steps.gate.outputs.ok");
+  for (const step of consumers) {
+    assert.match(step.if, /steps\.gate\.outputs\.ok == '(true|false)'/, `${step.name} reads ok without a literal`);
+  }
+});
+
+test("the merge step reaches the verdict only through a step gated on a true verdict", () => {
+  const steps = gateSteps();
+  const arm = steps[indexOfStep(steps, "Arm the merge")];
+  const required = steps[indexOfStep(steps, "Confirm this gate is a required check")];
+  assert.ok(arm);
+  assert.ok(required);
+  assert.doesNotMatch(arm.if, /steps\.gate\.outputs\.ok/);
+  assert.match(arm.if, /steps\.required\.outputs\.required == 'true'/);
+  assert.match(required.if, /steps\.gate\.outputs\.ok == 'true'/);
+});
+
 test("the refuse step skips schedule and still fails closed on every other event", () => {
   assertRefuseScheduleCarveOut(gateSteps());
 });
@@ -198,4 +225,230 @@ test("a planted refuse run that no longer exits 1 fails the schedule carve-out c
   const refuse = indexOfStep(steps, "Fail when the release is not accounted for");
   steps[refuse].run = 'echo "::error::The release contains commits this gate cannot vouch for."';
   assert.throws(() => assertRefuseScheduleCarveOut(steps), /no longer exits 1|required check green/);
+});
+
+const RESOLVE_REPO = "Monoradioactivo/release-gate-fixture";
+const RELEASE_HEAD = "release-please--branches--main--components--fixture";
+const RELEASE_BOT = "aetherpush-release-bot[bot]";
+
+const RESOLVE_STUB = [
+  "#!/bin/sh",
+  'printf "%s\\n" "$*" >> "$GH_CALLS"',
+  'FILTER=""',
+  'PREV=""',
+  'for ARG in "$@"; do',
+  '  if [ "$PREV" = "--jq" ]; then FILTER="$ARG"; fi',
+  '  PREV="$ARG"',
+  "done",
+  'case "$1 $2" in',
+  '  "pr list") BODY="$STUB_OPEN_PULLS" ;;',
+  '  "api repos/$GITHUB_REPOSITORY/pulls/"*) BODY="$STUB_PULL" ;;',
+  '  *) echo "unexpected gh: $*" >&2; exit 1 ;;',
+  "esac",
+  'printf "%s" "$BODY" | jq -r "$FILTER"',
+  "",
+].join("\n");
+
+const STEP_EXPRESSIONS = {
+  "${{ github.event_name }}": "event",
+  "${{ github.head_ref }}": "headRef",
+  "${{ github.event.pull_request.state }}": "prState",
+  "${{ github.event.pull_request.number }}": "eventPr",
+  "${{ steps.app-token.outputs.token }}": "token",
+};
+
+function stepEnv(step, context) {
+  const env = {};
+  for (const [key, expression] of Object.entries(step.env ?? {})) {
+    const field = STEP_EXPRESSIONS[expression];
+    assert.ok(field, `${step.name} reads ${expression}, which this harness does not model`);
+    env[key] = context[field];
+  }
+  return env;
+}
+
+function parseOutputs(text) {
+  const outputs = {};
+  for (const line of text.split("\n")) {
+    const at = line.indexOf("=");
+    if (at > 0) outputs[line.slice(0, at)] = line.slice(at + 1);
+  }
+  return outputs;
+}
+
+function runStep(doc, step, context) {
+  assert.equal(typeof step?.run, "string");
+  const dir = mkdtempSync(join(tmpdir(), "release-pr-resolve-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "gh"), RESOLVE_STUB, { mode: 0o755 });
+  const script = join(dir, "step.sh");
+  writeFileSync(script, step.run);
+  const output = join(dir, "github_output");
+  writeFileSync(output, "");
+  const calls = join(dir, "gh_calls");
+  writeFileSync(calls, "");
+
+  const result = spawnSync("bash", ["-e", script], {
+    env: {
+      PATH: `${bin}:/usr/bin:/bin`,
+      GITHUB_OUTPUT: output,
+      GITHUB_REPOSITORY: RESOLVE_REPO,
+      GH_CALLS: calls,
+      STUB_OPEN_PULLS: context.openPulls ?? "[]",
+      STUB_PULL: context.pull ?? "",
+      ...doc.env,
+      ...stepEnv(step, context),
+    },
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.equal(result.error, undefined, `${step.name} could not be spawned: ${result.error && result.error.message}`);
+  assert.doesNotMatch(result.stderr, /unexpected gh:/, `${step.name} asked the stub something it does not answer: ${result.stderr}`);
+  assert.equal(result.status, 0, `${step.name} exited ${result.status}: ${result.stderr}`);
+  return { outputs: parseOutputs(readFileSync(output, "utf8")), calls: readFileSync(calls, "utf8") };
+}
+
+function resolveReleasePullRequest(doc, context) {
+  const steps = gateSteps(doc);
+  const scope = steps[indexOfStep(steps, "Decide whether this run has anything to do")];
+  const resolve = steps[indexOfStep(steps, "Resolve the release pull request")];
+  const gate = steps[indexOfStep(steps, "Evaluate the gate")];
+  assert.ok(scope && resolve && gate, "the gate job lost its scope, resolve, or evaluate step");
+  assert.equal(scope.id, "scope");
+  assert.equal(resolve.id, "pr");
+  assert.equal(normalizeIf(resolve.if), "steps.scope.outputs.applies == 'true'");
+  assert.equal(normalizeIf(gate.if), "steps.pr.outputs.number != ''");
+
+  const full = { token: "stub-app-token", eventPr: "", headRef: "", prState: "", ...context };
+  const scoped = runStep(doc, scope, full);
+  if (scoped.outputs.applies !== "true") return { applies: scoped.outputs.applies, number: "", calls: "" };
+  const resolved = runStep(doc, resolve, full);
+  assert.ok("number" in resolved.outputs, "the resolve step exited without writing number");
+  return { applies: "true", number: resolved.outputs.number, calls: resolved.calls };
+}
+
+function pullFacts({ author = RELEASE_BOT, head = RELEASE_HEAD, state = "open" } = {}) {
+  return JSON.stringify({ user: { login: author }, head: { ref: head }, state });
+}
+
+function openPulls(...pulls) {
+  return JSON.stringify(pulls.map(([number, headRefName]) => ({ number, headRefName })));
+}
+
+function assertGenuineReleaseResolves(doc) {
+  const onEvent = resolveReleasePullRequest(doc, {
+    event: "pull_request",
+    eventPr: "160",
+    headRef: RELEASE_HEAD,
+    prState: "open",
+    pull: pullFacts(),
+  });
+  assert.equal(
+    onEvent.number,
+    "160",
+    "a genuine release pull request event resolved empty, so the gate and its backstop skip and the check reports green",
+  );
+
+  const onSchedule = resolveReleasePullRequest(doc, {
+    event: "schedule",
+    openPulls: openPulls([12, "feat/unrelated"], [160, RELEASE_HEAD]),
+    pull: pullFacts(),
+  });
+  assert.equal(
+    onSchedule.number,
+    "160",
+    "a scheduled run resolved empty with a genuine release pull request open, so the gate never evaluates it",
+  );
+}
+
+test("a genuine release pull request resolves to its number on events and on schedule", () => {
+  assertGenuineReleaseResolves(gateWorkflow());
+});
+
+test("the resolve step reads the candidate the event names and lists nothing", () => {
+  const run = resolveReleasePullRequest(gateWorkflow(), {
+    event: "pull_request",
+    eventPr: "160",
+    headRef: RELEASE_HEAD,
+    prState: "open",
+    pull: pullFacts(),
+  });
+  assert.match(run.calls, new RegExp(`^api repos/${RESOLVE_REPO}/pulls/160 `, "m"));
+  assert.doesNotMatch(run.calls, /^pr list/m);
+});
+
+test("no open release branch resolves empty without reading any pull request", () => {
+  const run = resolveReleasePullRequest(gateWorkflow(), {
+    event: "schedule",
+    openPulls: openPulls([12, "feat/unrelated"]),
+  });
+  assert.equal(run.applies, "true");
+  assert.equal(run.number, "");
+  assert.match(run.calls, new RegExp(`^pr list --repo ${RESOLVE_REPO} --state open `, "m"));
+  assert.doesNotMatch(run.calls, /pulls\//);
+});
+
+test("a release branch pull request not authored by the release bot resolves empty", () => {
+  const run = resolveReleasePullRequest(gateWorkflow(), {
+    event: "pull_request",
+    eventPr: "161",
+    headRef: RELEASE_HEAD,
+    prState: "open",
+    pull: pullFacts({ author: "drive-by" }),
+  });
+  assert.equal(run.applies, "true");
+  assert.equal(run.number, "");
+});
+
+test("a release pull request that is no longer open resolves empty", () => {
+  const run = resolveReleasePullRequest(gateWorkflow(), {
+    event: "workflow_dispatch",
+    openPulls: openPulls([160, RELEASE_HEAD]),
+    pull: pullFacts({ state: "closed" }),
+  });
+  assert.equal(run.applies, "true");
+  assert.equal(run.number, "");
+});
+
+test("a bot pull request whose head is not a release branch resolves empty", () => {
+  const run = resolveReleasePullRequest(gateWorkflow(), {
+    event: "workflow_dispatch",
+    openPulls: openPulls([160, RELEASE_HEAD]),
+    pull: pullFacts({ head: "feat/not-a-release" }),
+  });
+  assert.equal(run.applies, "true");
+  assert.equal(run.number, "");
+});
+
+test("an ordinary pull request never reaches resolution", () => {
+  const run = resolveReleasePullRequest(gateWorkflow(), {
+    event: "pull_request",
+    eventPr: "12",
+    headRef: "feat/unrelated",
+    prState: "open",
+  });
+  assert.equal(run.applies, "false");
+  assert.equal(run.number, "");
+});
+
+test("a planted resolve step that drops the number fails the genuine release check", () => {
+  const doc = cloneGate();
+  const resolve = gateSteps(doc)[indexOfStep(gateSteps(doc), "Resolve the release pull request")];
+  const planted = resolve.run.replace('echo "number=$CANDIDATE"', 'echo "number="');
+  assert.notEqual(planted, resolve.run, "the resolve step no longer writes number=$CANDIDATE, so this mutation plants nothing");
+  resolve.run = planted;
+  assert.throws(() => assertGenuineReleaseResolves(doc), /resolved empty/);
+});
+
+test("a planted release branch prefix that misses release-please fails the genuine release check", () => {
+  const doc = cloneGate();
+  doc.env.RELEASE_BRANCH_PREFIX = "release-please--branches--master";
+  assert.throws(() => assertGenuineReleaseResolves(doc), /resolved empty/);
+});
+
+test("a planted bot login that is not the release bot fails the genuine release check", () => {
+  const doc = cloneGate();
+  doc.env.RELEASE_BOT_LOGIN = "release-please[bot]";
+  assert.throws(() => assertGenuineReleaseResolves(doc), /resolved empty/);
 });
