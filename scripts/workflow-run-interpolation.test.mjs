@@ -243,6 +243,14 @@ const RESOLVE_STUB = [
   'case "$1 $2" in',
   '  "pr list") BODY="$STUB_OPEN_PULLS" ;;',
   '  "api repos/$GITHUB_REPOSITORY/pulls/"*) BODY="$STUB_PULL" ;;',
+  '  "pr merge") exit 0 ;;',
+  '  "pr comment")',
+  '    cat >> "$GH_BODIES"',
+  '    if [ "$STUB_COMMENT_FAIL" = "1" ]; then echo "stub: refusing to comment" >&2; exit 1; fi',
+  "    exit 0 ;;",
+  '  "api --paginate")',
+  '    if [ "$STUB_COMMENTS_FAIL" = "1" ]; then echo "stub: refusing the comments read" >&2; exit 1; fi',
+  '    BODY="$STUB_COMMENTS" ;;',
   '  *) echo "unexpected gh: $*" >&2; exit 1 ;;',
   "esac",
   'printf "%s" "$BODY" | jq -r "$FILTER"',
@@ -255,6 +263,9 @@ const STEP_EXPRESSIONS = {
   "${{ github.event.pull_request.state }}": "prState",
   "${{ github.event.pull_request.number }}": "eventPr",
   "${{ steps.app-token.outputs.token }}": "token",
+  "${{ steps.pr.outputs.number }}": "prNumber",
+  "${{ steps.gate.outputs.reasons }}": "reasons",
+  "${{ steps.gate.outputs.marker }}": "marker",
 };
 
 function stepEnv(step, context) {
@@ -288,15 +299,24 @@ function runStep(doc, step, context) {
   writeFileSync(output, "");
   const calls = join(dir, "gh_calls");
   writeFileSync(calls, "");
+  const bodies = join(dir, "gh_bodies");
+  writeFileSync(bodies, "");
+  const summary = join(dir, "step_summary");
+  writeFileSync(summary, "");
 
   const result = spawnSync("bash", ["-e", script], {
     env: {
       PATH: `${bin}:/usr/bin:/bin`,
       GITHUB_OUTPUT: output,
       GITHUB_REPOSITORY: RESOLVE_REPO,
+      GITHUB_STEP_SUMMARY: summary,
       GH_CALLS: calls,
+      GH_BODIES: bodies,
       STUB_OPEN_PULLS: context.openPulls ?? "[]",
       STUB_PULL: context.pull ?? "",
+      STUB_COMMENTS: context.comments ?? "[]",
+      STUB_COMMENTS_FAIL: context.commentsFail ?? "",
+      STUB_COMMENT_FAIL: context.commentFail ?? "",
       ...doc.env,
       ...stepEnv(step, context),
     },
@@ -305,9 +325,115 @@ function runStep(doc, step, context) {
   });
   assert.equal(result.error, undefined, `${step.name} could not be spawned: ${result.error && result.error.message}`);
   assert.doesNotMatch(result.stderr, /unexpected gh:/, `${step.name} asked the stub something it does not answer: ${result.stderr}`);
-  assert.equal(result.status, 0, `${step.name} exited ${result.status}: ${result.stderr}`);
-  return { outputs: parseOutputs(readFileSync(output, "utf8")), calls: readFileSync(calls, "utf8") };
+  if (context.expectFailure) {
+    assert.notEqual(result.status, 0, `${step.name} exited 0 where it had to fail`);
+  } else {
+    assert.equal(result.status, 0, `${step.name} exited ${result.status}: ${result.stderr}`);
+  }
+  return {
+    outputs: parseOutputs(readFileSync(output, "utf8")),
+    calls: readFileSync(calls, "utf8"),
+    bodies: readFileSync(bodies, "utf8"),
+    summary: readFileSync(summary, "utf8"),
+  };
 }
+
+const MARKER_A = "<!-- release-auto-merge-gate:aaaaaaaaaaaaaaaa -->";
+const MARKER_B = "<!-- release-auto-merge-gate:bbbbbbbbbbbbbbbb -->";
+const LEGACY_MARKER = "<!-- release-auto-merge-gate -->";
+const REASONS_A = "#1 (1111111) carries neither a Brief-Verified trailer nor the brief-verified label";
+const REASONS_B = `${REASONS_A}; #2 (2222222) carries neither a Brief-Verified trailer nor the brief-verified label`;
+
+function heldComments(...bodies) {
+  return JSON.stringify(bodies.map((body, index) => ({ id: index + 1, body })));
+}
+
+function holdComment(marker, reasons) {
+  return `${marker}\nThis release is held for a human merge:\n\n${reasons}\n`;
+}
+
+function runHold(context) {
+  const doc = gateWorkflow();
+  const steps = gateSteps(doc);
+  const hold = steps[indexOfStep(steps, "Hold the release for a human")];
+  assert.ok(hold, "the gate job lost its hold step");
+  return runStep(doc, hold, {
+    token: "stub-app-token",
+    prNumber: "42",
+    reasons: REASONS_A,
+    marker: MARKER_A,
+    comments: heldComments(),
+    ...context,
+  });
+}
+
+test("the hold step reads its marker from the gate, so the two never drift apart", () => {
+  const steps = gateSteps();
+  const hold = steps[indexOfStep(steps, "Hold the release for a human")];
+  assert.equal(hold.env.MARKER_ID, "${{ steps.gate.outputs.marker }}");
+  assert.equal(hold.env.REASONS, "${{ steps.gate.outputs.reasons }}");
+});
+
+test("a held release with no hold comment yet gets one naming its reasons", () => {
+  const run = runHold({});
+  assert.match(run.calls, /pr comment/);
+  assert.match(run.bodies, new RegExp(`^${MARKER_A}$`, "m"));
+  assert.match(run.bodies, /#1 \(1111111\)/);
+});
+
+test("a hold whose reasons have not changed gets no second comment", () => {
+  const run = runHold({ comments: heldComments(holdComment(MARKER_A, REASONS_A)) });
+  assert.doesNotMatch(run.calls, /pr comment/);
+  assert.match(run.summary, /already reports these reasons/);
+});
+
+test("a hold whose reasons changed gets a comment naming the commits that changed it", () => {
+  const run = runHold({
+    marker: MARKER_B,
+    reasons: REASONS_B,
+    comments: heldComments(holdComment(MARKER_A, REASONS_A)),
+  });
+  assert.match(run.calls, /pr comment/);
+  assert.match(run.bodies, /#2 \(2222222\)/);
+});
+
+test("the newest hold comment decides, not an older one that still matches", () => {
+  const run = runHold({
+    comments: heldComments(holdComment(MARKER_A, REASONS_A), holdComment(MARKER_B, REASONS_B)),
+  });
+  assert.match(run.calls, /pr comment/);
+});
+
+test("a hold comment a person edited in the browser does not earn a fresh comment every run", () => {
+  const run = runHold({ comments: heldComments(`${MARKER_A}\r\nThis release is held for a human merge:\r\n\r\nand a note`) });
+  assert.doesNotMatch(run.calls, /pr comment/);
+});
+
+test("a comments read that fails turns the step red, because a broken release bot has no other alarm", () => {
+  const run = runHold({ commentsFail: "1", expectFailure: true });
+  assert.doesNotMatch(run.calls, /pr comment/);
+  assert.match(run.summary, /Could not read the comments/);
+});
+
+test("a comment with no body does not break the read", () => {
+  const run = runHold({ comments: JSON.stringify([{ id: 1, body: null }, { id: 2, body: holdComment(MARKER_A, REASONS_A) }]) });
+  assert.doesNotMatch(run.calls, /pr comment/);
+});
+
+test("a gate that wrote no marker falls back to commenting only when nothing is there", () => {
+  const already = runHold({ marker: "", comments: heldComments(holdComment(LEGACY_MARKER, REASONS_A)) });
+  assert.doesNotMatch(already.calls, /pr comment/);
+
+  const bare = runHold({ marker: "" });
+  assert.match(bare.calls, /pr comment/);
+  assert.match(bare.bodies, new RegExp(`^${LEGACY_MARKER}$`, "m"));
+});
+
+test("a comment the step could not post turns the step red, because nobody else will hear of the hold", () => {
+  const run = runHold({ commentFail: "1", expectFailure: true });
+  assert.match(run.calls, /pr comment/);
+  assert.match(run.summary, /this hold is not reported/);
+});
 
 function resolveReleasePullRequest(doc, context) {
   const steps = gateSteps(doc);

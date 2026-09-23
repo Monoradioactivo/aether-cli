@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { REQUIRED_TEST_CHECK } from "./release-auto-merge-gate.mjs";
+import { holdCommentMarker } from "./check-release-auto-merge.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const scriptPath = join(scriptDir, "check-release-auto-merge.mjs");
@@ -201,6 +202,43 @@ test("a label-vouched commit with a successful Test check is blessed", () => {
   assert.equal(run.verdict.commits[0].via, "brief-verified label");
   assert.match(run.output, /^ok=true$/m);
   assert.match(run.output, /^reasons<<GATE_[0-9a-f]{32}$/m);
+  assert.match(run.output, /^marker=<!-- release-auto-merge-gate:[0-9a-f]{16} -->$/m);
+});
+
+function markerOf(run) {
+  const line = run.output.match(/^marker=(.*)$/m);
+  assert.ok(line, "the gate wrote no marker line, so the hold step falls back to once per pull request");
+  return line[1];
+}
+
+function reasonsOf(run) {
+  const block = run.output.match(/^reasons<<(GATE_[0-9a-f]{32})\n([\s\S]*?)\n\1$/m);
+  assert.ok(block, "the gate wrote no reasons block");
+  return block[2];
+}
+
+function heldBy(actor) {
+  return runGate({ env: labelVouchedCommit({ STUB_EVENTS: ndjson([{ actor, at: "2026-09-11T08:00:00Z" }]) }) });
+}
+
+test("the marker the gate writes digests the reason list it wrote beside it", () => {
+  const held = heldBy("drive-by");
+  assert.equal(held.verdict.ok, false);
+  assert.match(reasonsOf(held), /applied by drive-by/);
+  assert.equal(markerOf(held), holdCommentMarker(reasonsOf(held)));
+});
+
+test("two different held reason lists carry two different markers", () => {
+  const one = heldBy("drive-by");
+  const other = heldBy("someone-else");
+  assert.equal(one.verdict.ok, false);
+  assert.equal(other.verdict.ok, false);
+  assert.notEqual(one.verdict.reasons[0], other.verdict.reasons[0]);
+  assert.notEqual(markerOf(one), markerOf(other));
+});
+
+test("the same held reason list carries the same marker on a later run", () => {
+  assert.equal(markerOf(heldBy("drive-by")), markerOf(heldBy("drive-by")));
 });
 
 test("every line of a multi-page NDJSON body is parsed, not just the first", () => {
@@ -681,7 +719,10 @@ test("importing the module runs no gate and writes no output", () => {
   );
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /IMPORTED \["contentsFetchFailedAsMissing","versionFromPayloads"\]/);
+  assert.match(
+    result.stdout,
+    /IMPORTED \["HOLD_COMMENT_MARKER_PREFIX","contentsFetchFailedAsMissing","holdCommentMarker","versionFromPayloads"\]/,
+  );
   assert.doesNotMatch(result.stdout, /"ok":/);
   assert.equal(readFileSync(output, "utf8"), "");
 });
