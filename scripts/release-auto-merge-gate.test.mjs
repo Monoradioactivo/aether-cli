@@ -9,7 +9,12 @@ import {
   REQUIRED_TEST_CHECK,
   trailerBlockOf,
 } from "./release-auto-merge-gate.mjs";
-import { contentsFetchFailedAsMissing, versionFromPayloads } from "./check-release-auto-merge.mjs";
+import {
+  contentsFetchFailedAsMissing,
+  HOLD_COMMENT_MARKER_PREFIX,
+  holdCommentMarker,
+  versionFromPayloads,
+} from "./check-release-auto-merge.mjs";
 
 const noPullRequest = () => ({ missing: true });
 const verifiedPr = (number, testConclusion = "success", labelActor = "Monoradioactivo") => () => ({
@@ -603,4 +608,32 @@ test("a contents 404 is missing; a 403 or 500 is not", () => {
   assert.equal(contentsFetchFailedAsMissing("gh: Not Found (HTTP 404)"), true);
   assert.equal(contentsFetchFailedAsMissing('{"message":"Forbidden","status":"403"}'), false);
   assert.equal(contentsFetchFailedAsMissing('{"message":"Server Error","status":"500"}'), false);
+});
+
+const ONE_REASON = "#1 (1111111) carries neither a Brief-Verified trailer nor the brief-verified label";
+const TWO_REASONS = `${ONE_REASON}; #2 (2222222) carries neither a Brief-Verified trailer nor the brief-verified label`;
+
+test("an unchanged hold keeps its marker", () => {
+  assert.equal(holdCommentMarker(ONE_REASON), holdCommentMarker(ONE_REASON));
+  assert.match(holdCommentMarker(ONE_REASON), /^<!-- release-auto-merge-gate:[0-9a-f]{16} -->$/);
+});
+
+test("the marker is the first 16 hex of the reason list's sha256, so held pull requests keep theirs across workflow releases", () => {
+  assert.equal(holdCommentMarker(ONE_REASON), "<!-- release-auto-merge-gate:c2c3540dea50c6ca -->");
+});
+
+test("a changed hold changes its marker", () => {
+  assert.notEqual(holdCommentMarker(ONE_REASON), holdCommentMarker(TWO_REASONS));
+  assert.notEqual(holdCommentMarker(ONE_REASON), holdCommentMarker(""));
+  assert.notEqual(holdCommentMarker(ONE_REASON), holdCommentMarker(`${ONE_REASON} `));
+});
+
+test("every marker the step looks for carries the prefix, the legacy one included", () => {
+  assert.ok(holdCommentMarker(ONE_REASON).startsWith(HOLD_COMMENT_MARKER_PREFIX));
+  assert.ok("<!-- release-auto-merge-gate -->".startsWith(HOLD_COMMENT_MARKER_PREFIX));
+});
+
+test("a missing reason list still yields a usable marker rather than throwing", () => {
+  assert.match(holdCommentMarker(undefined), /^<!-- release-auto-merge-gate:[0-9a-f]{16} -->$/);
+  assert.equal(holdCommentMarker(undefined), holdCommentMarker(""));
 });

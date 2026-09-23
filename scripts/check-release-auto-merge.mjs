@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, realpathSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -216,6 +216,13 @@ function versionFromRef(ref) {
   return versionFromPayloads({ manifest: null, packageJson: pkg.json });
 }
 
+export const HOLD_COMMENT_MARKER_PREFIX = "<!-- release-auto-merge-gate";
+
+export function holdCommentMarker(reasons) {
+  const digest = createHash("sha256").update(String(reasons ?? ""), "utf8").digest("hex").slice(0, 16);
+  return `${HOLD_COMMENT_MARKER_PREFIX}:${digest} -->`;
+}
+
 function writeOutput(verdict) {
   if (!process.env.GITHUB_OUTPUT) return;
   const delimiter = `GATE_${randomUUID().replace(/-/g, "")}`;
@@ -223,6 +230,7 @@ function writeOutput(verdict) {
   const oneLine = reasons.replace(/[\r\n]+/g, " ");
   appendFileSync(process.env.GITHUB_OUTPUT, `ok=${verdict.ok}\n`);
   appendFileSync(process.env.GITHUB_OUTPUT, `reasons<<${delimiter}\n${oneLine}\n${delimiter}\n`);
+  appendFileSync(process.env.GITHUB_OUTPUT, `marker=${holdCommentMarker(oneLine)}\n`);
 }
 
 function main() {

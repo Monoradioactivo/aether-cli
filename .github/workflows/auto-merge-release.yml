@@ -236,16 +236,37 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REASONS: ${{ steps.gate.outputs.reasons }}
+          MARKER_ID: ${{ steps.gate.outputs.marker }}
           PR: ${{ steps.pr.outputs.number }}
         run: |
+          set -o pipefail
           gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --disable-auto || true
-          MARKER="<!-- release-auto-merge-gate -->"
-          EXISTING=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
-            --jq "[.[] | select(.body | startswith(\"$MARKER\"))] | length")
-          if [ "$EXISTING" = "0" ]; then
-            printf '%s\nThis release is held for a human merge:\n\n%s\n' "$MARKER" "$REASONS" \
-              | gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file -
+          if ! REPORTED=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
+            --jq '.[] | select((.body // "") | startswith("<!-- release-auto-merge-gate")) | .body | split("\n")[0] | rtrimstr("\r")' \
+            | tail -n 1); then
+            echo "::error::Could not read the comments on #$PR, so nobody can tell whether this hold was reported."
+            echo "Could not read the comments on #$PR; this hold may be unreported." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
+          if [ -z "$MARKER_ID" ]; then
+            echo "::warning::The gate wrote no marker for #$PR, so this run can only tell whether a hold comment exists at all."
+            MARKER_ID="<!-- release-auto-merge-gate -->"
+            if [ -n "$REPORTED" ]; then
+              echo "Left #$PR alone: the gate wrote no marker and a hold comment is already there." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+          if [ "$REPORTED" = "$MARKER_ID" ]; then
+            echo "Left #$PR alone: its newest hold comment already reports these reasons." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! printf '%s\nThis release is held for a human merge:\n\n%s\n' "$MARKER_ID" "$REASONS" \
+            | gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file -; then
+            echo "::error::Could not comment on #$PR, so this hold is not reported to anyone."
+            echo "Could not comment on #$PR; this hold is not reported." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Commented on #$PR: its reasons differ from the newest hold comment there." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Disarm if this run failed
         if: failure() && steps.pr.outputs.number != ''
