@@ -8,6 +8,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -65,6 +68,9 @@ jobs:
 
       - name: Behind bot tests
         run: node --test scripts/behind-bot.test.mjs
+
+      - name: Commit provenance tests
+        run: node --test scripts/commit-provenance.test.mjs
 
       - name: Test
         run: npm test
