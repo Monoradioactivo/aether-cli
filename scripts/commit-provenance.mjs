@@ -9,6 +9,8 @@ export const PROTECTED_BRANCH = "main";
 export const WEB_FLOW_LOGIN = "web-flow";
 export const RELEASE_BRANCH_PREFIX = "release-please--branches--main";
 export const VERSION_MARKER = "x-release-please-version";
+export const VOUCH_RUN_NAME = "Commit provenance";
+export const VOUCH_WORKFLOW_PATH = ".github/workflows/commit-provenance.yml";
 export const MAX_COMPARE_COMMITS = 250;
 
 const SSH_SIGNATURE = "-----BEGIN SSH SIGNATURE-----";
@@ -100,6 +102,87 @@ export function classifyCommit(commit, { signers = DEFAULT_TRUSTED_SIGNERS, isAn
 
 export function isLabelVouch(event, label = DEFAULT_VERIFIED_LABEL, actors = DEFAULT_LABEL_ACTOR_ALLOWLIST) {
   return event?.action === "labeled" && event?.label === label && actors.includes(event?.sender);
+}
+
+export function vouchRunTitle(pullNumber, action, label) {
+  return `${VOUCH_RUN_NAME} #${pullNumber} ${action} ${label}`.trim();
+}
+
+function ordinal(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function identifier(value) {
+  return typeof value === "string" && value.length > 0 ? value : typeof value === "number" ? String(value) : null;
+}
+
+export function latestLabelEvent(labelEvents, label) {
+  const matching = (Array.isArray(labelEvents) ? labelEvents : []).filter(
+    (entry) =>
+      entry?.label === label &&
+      (entry?.action === "labeled" || entry?.action === "unlabeled") &&
+      ordinal(entry?.id) !== null,
+  );
+  if (matching.length === 0) return null;
+  return matching.reduce((newest, entry) => (ordinal(entry.id) > ordinal(newest.id) ? entry : newest));
+}
+
+export function latestVouchRun(runs, pullNumber, label) {
+  const actions = new Map(
+    ["labeled", "unlabeled"].map((action) => [vouchRunTitle(pullNumber, action, label), action]),
+  );
+  const matching = (Array.isArray(runs) ? runs : []).filter(
+    (run) => actions.has(String(run?.title ?? "").trim()) && ordinal(run?.runNumber) !== null,
+  );
+  if (matching.length === 0) return null;
+  const newest = matching.reduce((best, run) => (ordinal(run.runNumber) > ordinal(best.runNumber) ? run : best));
+  return { ...newest, action: actions.get(String(newest.title).trim()) };
+}
+
+export function judgeStandingVouch({
+  pullNumber,
+  headSha,
+  runId,
+  labels,
+  labelEvents,
+  runs,
+  unread,
+  workflowMismatch,
+  label = DEFAULT_VERIFIED_LABEL,
+  actors = DEFAULT_LABEL_ACTOR_ALLOWLIST,
+}) {
+  if (unread) return { ok: false, reason: `the ${label} vouch on this pull request could not be read: ${unread}` };
+  if (workflowMismatch) return { ok: false, reason: workflowMismatch };
+  if (identifier(pullNumber) === null || identifier(headSha) === null) {
+    return { ok: false, reason: `the ${label} vouch needs the pull request number and the head it is judging` };
+  }
+  if (!(Array.isArray(labels) && labels.includes(label))) {
+    return { ok: false, reason: `the pull request does not carry the ${label} label` };
+  }
+
+  const event = latestLabelEvent(labelEvents, label);
+  if (event === null) return { ok: false, reason: `no ${label} label event is recorded on this pull request` };
+  if (event.action !== "labeled") return { ok: false, reason: `the newest ${label} label event removed the label` };
+  if (!actors.includes(event.actor)) {
+    return { ok: false, reason: `the newest ${label} label event was sent by ${event.actor ?? "an unknown account"}` };
+  }
+
+  if (identifier(runId) === null || !(Array.isArray(runs) && runs.some((run) => identifier(run?.id) === identifier(runId)))) {
+    return { ok: false, reason: `this run is missing from the ${VOUCH_RUN_NAME} runs of this branch, so their order cannot be trusted` };
+  }
+  const run = latestVouchRun(runs, pullNumber, label);
+  if (run === null) {
+    return { ok: false, reason: `no ${VOUCH_RUN_NAME} run on this branch records a ${label} label event on this pull request` };
+  }
+  if (run.action !== "labeled") return { ok: false, reason: `the newest ${label} run on this branch removed the label` };
+  if (!actors.includes(run.actor)) {
+    return { ok: false, reason: `the newest ${label} run on this branch was started by ${run.actor ?? "an unknown account"}` };
+  }
+  if (identifier(run.headSha) === null || run.headSha !== headSha) {
+    return { ok: false, reason: `the ${label} label was applied to ${short(run.headSha) || "another head"}, not to ${short(headSha)}` };
+  }
+  return { ok: true, actor: event.actor };
 }
 
 export function isReleasePullRequest(pullRequest, releaseBotLogin = DEFAULT_RELEASE_BOT_LOGIN) {
@@ -248,6 +331,9 @@ export function judgePullRequest({
   baseRef,
   pullRequest,
   event,
+  labels = [],
+  labelsMayBeStale = false,
+  resolveVouch = null,
   commits,
   totalCommits,
   gitCommitShas,
@@ -282,11 +368,26 @@ export function judgePullRequest({
   if (classified.every((entry) => entry.ok)) {
     return { ok: true, via: "every commit is trusted", reasons: [], commits: classified };
   }
-  if (isLabelVouch(event, label, labelActors)) {
+  if (!labelsMayBeStale && isLabelVouch(event, label, labelActors)) {
     return { ok: true, via: `${label} label applied by ${event.sender}`, reasons: [], commits: classified };
   }
 
-  const reasons = classified.filter((entry) => !entry.ok).map((entry) => entry.reason);
+  const pullNumber = pullRequest?.number;
+  const headSha = pullRequest?.headSha;
+  const standing =
+    (labels.includes(label) || labelsMayBeStale) && resolveVouch
+      ? judgeStandingVouch({
+          ...resolveVouch({ pullNumber, headSha }),
+          pullNumber,
+          headSha,
+          label,
+          actors: labelActors,
+        })
+      : null;
+  if (standing?.ok) {
+    return { ok: true, via: `${label} label applied by ${standing.actor}`, reasons: [], commits: classified };
+  }
+
   if (isReleasePullRequest(pullRequest, releaseBotLogin)) {
     const untrusted = classified.filter((entry) => !entry.ok && !entry.webFlow);
     const footprint = releaseFootprintReasons({ changes, read, extraFiles });
@@ -300,5 +401,7 @@ export function judgePullRequest({
       commits: classified,
     };
   }
+  const reasons = classified.filter((entry) => !entry.ok).map((entry) => entry.reason);
+  if (standing) reasons.push(standing.reason);
   return { ok: false, via: null, reasons, commits: classified };
 }
