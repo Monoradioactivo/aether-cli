@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   classifyCommit,
@@ -12,6 +13,7 @@ import {
   MAX_COMPARE_COMMITS,
   parseNameStatus,
   releaseFootprintReasons,
+  vouchRunTitle,
 } from "./commit-provenance.mjs";
 
 const SSH = "-----BEGIN SSH SIGNATURE-----\nabc\n-----END SSH SIGNATURE-----";
@@ -362,4 +364,266 @@ test("extra files come from the root package or the top level of release-please-
   assert.deepEqual(extraFilesFrom({ packages: { ".": { "extra-files": [{ type: "generic", path: "examples/ci/Jenkinsfile" }, "README.md"] } } }), ["examples/ci/Jenkinsfile", "README.md"]);
   assert.deepEqual(extraFilesFrom({ "extra-files": ["a.yml"] }), ["a.yml"]);
   assert.deepEqual(extraFilesFrom(null), []);
+});
+
+const vouchPull = { ...adrianPull, number: 42, headSha: "h2" };
+const VOUCH_RUN_ID = 9001;
+const ownRun = { id: VOUCH_RUN_ID, runNumber: 20, title: "Commit provenance #42 synchronize", actor: "Monoradioactivo", headSha: "h2" };
+
+function vouchRun(runNumber, action, { pull = 42, label = "brief-verified", actor = "Monoradioactivo", headSha = "h2" } = {}) {
+  return { id: runNumber, runNumber, title: `Commit provenance #${pull} ${action} ${label}`, actor, headSha };
+}
+
+function labelEvent(id, action, { label = "brief-verified", actor = "Monoradioactivo" } = {}) {
+  return { id, action, label, actor };
+}
+
+function standing(overrides = {}) {
+  const {
+    commits = [webFlow("r1")],
+    labels = ["brief-verified"],
+    liveLabels = ["brief-verified"],
+    labelsMayBeStale,
+    ...vouch
+  } = overrides;
+  return judge({
+    commits,
+    pullRequest: vouchPull,
+    labels,
+    labelsMayBeStale,
+    resolveVouch: () => ({
+      runId: VOUCH_RUN_ID,
+      labels: liveLabels,
+      labelEvents: [labelEvent(10, "labeled")],
+      runs: [ownRun, vouchRun(7, "labeled")],
+      ...vouch,
+    }),
+  });
+}
+
+test("a vouched head keeps passing on a later event while the label is still there", () => {
+  const verdict = standing();
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.via, "brief-verified label applied by Monoradioactivo");
+});
+
+test("the vouch dies with the label", () => {
+  assert.equal(standing({ labels: [] }).ok, false);
+  assert.equal(standing({ labels: ["blocked"] }).ok, false);
+  const gone = standing({ liveLabels: [] });
+  assert.equal(gone.ok, false);
+  assert.match(gone.reasons.join("\n"), /does not carry the brief-verified label/);
+});
+
+test("a re-run whose frozen payload predates the label still finds the vouch", () => {
+  const replay = standing({ labels: [], labelsMayBeStale: true });
+  assert.equal(replay.ok, true);
+  assert.equal(replay.via, "brief-verified label applied by Monoradioactivo");
+});
+
+test("a re-run of the labeled run itself cannot replay a withdrawn vouch", () => {
+  const labeledEvent = { action: "labeled", label: "brief-verified", sender: "Monoradioactivo" };
+  const live = judge({
+    commits: [webFlow("r1")],
+    pullRequest: vouchPull,
+    event: labeledEvent,
+    labels: ["brief-verified"],
+  });
+  assert.equal(live.ok, true);
+  assert.equal(live.via, "brief-verified label applied by Monoradioactivo");
+  const replayed = judge({
+    commits: [webFlow("r1")],
+    pullRequest: vouchPull,
+    event: labeledEvent,
+    labels: ["brief-verified"],
+    labelsMayBeStale: true,
+    resolveVouch: () => ({
+      runId: VOUCH_RUN_ID,
+      labels: [],
+      labelEvents: [labelEvent(10, "labeled"), labelEvent(11, "unlabeled")],
+      runs: [ownRun, vouchRun(7, "labeled"), vouchRun(8, "unlabeled")],
+    }),
+  });
+  assert.equal(replayed.ok, false);
+  assert.match(replayed.reasons.join("\n"), /does not carry the brief-verified label/);
+});
+
+test("a re-run reads the label from the repository, not from its own payload", () => {
+  const gone = standing({ labels: ["brief-verified"], liveLabels: [], labelsMayBeStale: true });
+  assert.equal(gone.ok, false);
+  assert.match(gone.reasons.join("\n"), /does not carry the brief-verified label/);
+});
+
+test("a vouch the trusted account withdrew stays dead even when the label comes back", () => {
+  const withdrawn = standing({ labelEvents: [labelEvent(10, "labeled"), labelEvent(11, "unlabeled")] });
+  assert.equal(withdrawn.ok, false);
+  assert.match(withdrawn.reasons.join("\n"), /newest brief-verified label event removed the label/);
+  const reapplied = standing({
+    labelEvents: [labelEvent(10, "labeled"), labelEvent(11, "unlabeled"), labelEvent(12, "labeled", { actor: "aetherpush-release-bot[bot]" })],
+  });
+  assert.equal(reapplied.ok, false);
+  assert.match(reapplied.reasons.join("\n"), /sent by aetherpush-release-bot\[bot\]/);
+});
+
+test("label events are ordered by their id, not by their place in the listing", () => {
+  assert.equal(standing({ labelEvents: [labelEvent(11, "unlabeled"), labelEvent(10, "labeled")] }).ok, false);
+  assert.equal(standing({ labelEvents: [labelEvent(11, "labeled"), labelEvent(12, "unlabeled"), labelEvent(13, "labeled")] }).ok, true);
+});
+
+test("an event on another label never vouches", () => {
+  const verdict = standing({ labelEvents: [labelEvent(10, "labeled", { label: "blocked" })] });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /no brief-verified label event is recorded/);
+});
+
+test("a head pushed after the vouch does not inherit it", () => {
+  const verdict = standing({ runs: [ownRun, vouchRun(7, "labeled", { headSha: "h1" })] });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /was applied to h1, not to h2/);
+});
+
+test("a vouch on another pull request with the same head does not carry over", () => {
+  const verdict = standing({ runs: [ownRun, vouchRun(7, "labeled", { pull: 41 })] });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /no Commit provenance run on this branch records/);
+});
+
+test("the newest run naming the label decides, so a withdrawal recorded there is final", () => {
+  const verdict = standing({ runs: [ownRun, vouchRun(7, "labeled"), vouchRun(11, "unlabeled")] });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /newest brief-verified run on this branch removed the label/);
+});
+
+test("a run started by any other account is no vouch, whatever its title says", () => {
+  const verdict = standing({ runs: [ownRun, vouchRun(7, "labeled", { actor: "aetherpush-release-bot[bot]" })] });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /started by aetherpush-release-bot\[bot\]/);
+});
+
+test("a run listing that does not carry this run is too stale to order", () => {
+  const verdict = standing({ runs: [vouchRun(7, "labeled")] });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /missing from the Commit provenance runs of this branch/);
+});
+
+test("a vouch the check could not read refuses", () => {
+  const verdict = standing({ unread: "HTTP 403" });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /could not be read: HTTP 403/);
+});
+
+test("a head whose copy of the workflow is not main's gets no standing vouch", () => {
+  const verdict = standing({ workflowMismatch: "the head's .github/workflows/commit-provenance.yml differs from the one on main" });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /differs from the one on main/);
+});
+
+test("the resolver cannot widen the allowlist or move the head it answers about", () => {
+  const verdict = standing({
+    actors: ["aetherpush-release-bot[bot]"],
+    label: "anything",
+    pullNumber: 41,
+    headSha: "h1",
+    labelEvents: [labelEvent(10, "labeled", { actor: "aetherpush-release-bot[bot]" })],
+    runs: [ownRun, vouchRun(7, "labeled", { actor: "aetherpush-release-bot[bot]" })],
+  });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /sent by aetherpush-release-bot\[bot\]/);
+});
+
+test("the resolver is asked about the pull request and head under judgement", () => {
+  let asked = null;
+  judge({
+    commits: [webFlow("r1")],
+    pullRequest: vouchPull,
+    labels: ["brief-verified"],
+    resolveVouch: (pull) => {
+      asked = pull;
+      return {};
+    },
+  });
+  assert.deepEqual(asked, { pullNumber: 42, headSha: "h2" });
+});
+
+test("identifiers that carry no order refuse rather than fall back to listing order", () => {
+  const unordered = standing({ labelEvents: [labelEvent(undefined, "labeled"), labelEvent(undefined, "unlabeled")] });
+  assert.equal(unordered.ok, false);
+  assert.match(unordered.reasons.join("\n"), /no brief-verified label event is recorded/);
+  const unnumbered = standing({
+    runs: [ownRun, { ...vouchRun(7, "labeled"), runNumber: undefined }, { ...vouchRun(8, "unlabeled"), runNumber: undefined }],
+  });
+  assert.equal(unnumbered.ok, false);
+  assert.match(unnumbered.reasons.join("\n"), /no Commit provenance run on this branch records/);
+  const headless = standing({ runs: [ownRun, { ...vouchRun(7, "labeled"), headSha: undefined }] });
+  assert.equal(headless.ok, false);
+  assert.match(headless.reasons.join("\n"), /not to h2/);
+});
+
+test("a vouch with no pull request number or head to bind to refuses", () => {
+  const noNumber = judge({
+    commits: [webFlow("r1")],
+    pullRequest: { ...vouchPull, number: undefined },
+    labels: ["brief-verified"],
+    resolveVouch: () => ({ runId: VOUCH_RUN_ID, labelEvents: [labelEvent(10, "labeled")], runs: [ownRun, vouchRun(7, "labeled")] }),
+  });
+  assert.equal(noNumber.ok, false);
+  assert.match(noNumber.reasons.join("\n"), /needs the pull request number and the head/);
+});
+
+test("the standing vouch is consulted only when the pull request carries the label", () => {
+  let consulted = false;
+  const verdict = judge({
+    commits: [webFlow("r1")],
+    pullRequest: vouchPull,
+    labels: ["dependencies"],
+    resolveVouch: () => {
+      consulted = true;
+      return {};
+    },
+  });
+  assert.equal(consulted, false);
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.reasons.length, 1);
+});
+
+test("an unlabelled release pull request passes on its footprint without reading the vouch", () => {
+  let consulted = false;
+  const verdict = judge({
+    pullRequest: { ...releasePull, number: 42, headSha: "h2" },
+    commits: [webFlow("rel1")],
+    changes: releaseChanges,
+    read: releaseFiles(),
+    extraFiles,
+    resolveVouch: () => {
+      consulted = true;
+      return {};
+    },
+  });
+  assert.equal(verdict.ok, true);
+  assert.equal(consulted, false);
+});
+
+function readWorkflow() {
+  for (const candidate of ["../.github/workflows/commit-provenance.yml", "../workflows/commit-provenance.yml"]) {
+    try {
+      return readFileSync(new URL(candidate, import.meta.url), "utf8");
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("the Commit provenance workflow is not beside this test");
+}
+
+test("the title the check looks for is the one the workflow renders", () => {
+  const workflow = readWorkflow();
+  const runName = /^run-name:\s*"(.+)"\s*$/m.exec(workflow);
+  assert.ok(runName, "the workflow sets a quoted run-name");
+  const rendered = runName[1]
+    .replace("${{ github.event.pull_request.number }}", "42")
+    .replace("${{ github.event.action }}", "labeled")
+    .replace("${{ github.event.label.name }}", "brief-verified");
+  assert.equal(rendered.trim(), vouchRunTitle(42, "labeled", "brief-verified"));
+  assert.match(workflow, /PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(workflow, /PR_LABELS: \$\{\{ toJSON\(github\.event\.pull_request\.labels\.\*\.name\) \}\}/);
+  assert.match(workflow, /^\s{2}actions: read$/m);
 });
