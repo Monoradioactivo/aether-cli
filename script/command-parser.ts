@@ -1656,6 +1656,10 @@ export function createCommand(): cli.ICommand {
       case "whoami":
         cmd = { type: cli.CommandType.whoami };
         break;
+
+      default:
+        reportParseFailure(`Unknown command: ${arg0}`, true);
+        break;
     }
 
     if (cmd) {
