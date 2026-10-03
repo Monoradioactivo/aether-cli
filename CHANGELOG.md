@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.4](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.3...v0.9.4) (2026-10-03)
+
+
+### Bug Fixes
+
+* **cli:** tell the user when the top-level command is unknown ([#164](https://github.com/Monoradioactivo/aether-cli/issues/164)) ([69b8236](https://github.com/Monoradioactivo/aether-cli/commit/69b8236c5f22d96c7b01f0bb9fce7306ef0a7ad9))
+
 ## [0.9.3](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.2...v0.9.3) (2026-09-18)
 
 
