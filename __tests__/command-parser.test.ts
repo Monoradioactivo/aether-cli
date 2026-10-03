@@ -132,6 +132,20 @@ describe("command-parser", () => {
       expect(parseFailed).toBe(true);
     });
 
+    it("prints that an unknown top-level command is not recognised, followed by the root usage", () => {
+      const { cmd, parseFailed } = parseArgsWithState(["nonsense-command"]);
+      expect(cmd).toBeUndefined();
+      expect(parseFailed).toBe(true);
+      const printed = errorOutput();
+      expect(printed.split("Unknown command: nonsense-command").length - 1).toBe(1);
+      expect(printed.indexOf("Usage: aether <command>")).toBeGreaterThan(printed.indexOf("Unknown command: nonsense-command"));
+    });
+
+    it("does not report an unknown command for a valid command", () => {
+      parseArgsWithState(["app", "list"]);
+      expect(errorOutput()).not.toContain("Unknown command");
+    });
+
     it("is true when a known command is missing required positional args", () => {
       const { parseFailed } = parseArgsWithState(["app", "rm"]);
       expect(parseFailed).toBe(true);
@@ -152,6 +166,7 @@ describe("command-parser", () => {
       expect(cmd).toBeUndefined();
       expect(parseFailed).toBe(false);
       expect(errorOutput()).not.toContain("Not enough non-option arguments");
+      expect(errorOutput()).not.toContain("Unknown command");
     });
 
     it("is reset between invocations via isolateModules", () => {

@@ -61,6 +61,13 @@ function runCli(args: string[]): { exitCode: number | null; helpShown: boolean; 
   return { exitCode, helpShown, executeCalled };
 }
 
+function errorOutput(): string {
+  return (console.error as jest.Mock).mock.calls
+    .flat()
+    .map((value) => String(value))
+    .join("\n");
+}
+
 describe("cli entry point", () => {
   beforeEach(() => {
     jest.spyOn(console, "log").mockImplementation(() => undefined);
@@ -76,6 +83,13 @@ describe("cli entry point", () => {
       const { exitCode, executeCalled } = runCli(["nonsense-command"]);
       expect(exitCode).toBe(1);
       expect(executeCalled).toBe(false);
+    });
+
+    it("tells the user an unknown command category is not recognised before exiting 1", () => {
+      const { exitCode } = runCli(["nonsense-command"]);
+      expect(exitCode).toBe(1);
+      expect(errorOutput()).toContain("Unknown command: nonsense-command");
+      expect(errorOutput()).toContain("Usage: aether <command>");
     });
 
     it("exits 1 when a known command is missing required args", () => {
@@ -95,6 +109,7 @@ describe("cli entry point", () => {
       expect(exitCode).toBeNull();
       expect(helpShown).toBe(true);
       expect(executeCalled).toBe(false);
+      expect(errorOutput()).not.toContain("Unknown command");
     });
 
     it("proceeds to execute() when a valid command is parsed", () => {
