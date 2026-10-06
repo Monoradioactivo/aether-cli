@@ -169,6 +169,21 @@ describe("command-parser", () => {
       expect(errorOutput()).not.toContain("Unknown command");
     });
 
+    it("is true when flags are passed with no command", () => {
+      const { cmd, parseFailed } = parseArgsWithState(["--nonsense"]);
+      expect(cmd).toBeUndefined();
+      expect(parseFailed).toBe(true);
+      expect(errorOutput()).toContain("Not enough non-option arguments: got 0, need at least 1");
+      expect(errorOutput()).toContain("Usage: aether <command>");
+    });
+
+    it("is true for a short option with no command", () => {
+      const { cmd, parseFailed } = parseArgsWithState(["-x"]);
+      expect(cmd).toBeUndefined();
+      expect(parseFailed).toBe(true);
+      expect(errorOutput()).toContain("Not enough non-option arguments: got 0, need at least 1");
+    });
+
     it("is reset between invocations via isolateModules", () => {
       const first = parseArgsWithState(["nonsense"]);
       expect(first.parseFailed).toBe(true);
