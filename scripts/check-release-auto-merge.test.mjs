@@ -756,9 +756,20 @@ function gateWorkflowSource() {
 }
 
 function concurrencyGroup(source = gateWorkflowSource()) {
-  const match = source.match(/^concurrency:\n(?:[ \t]+.*\n)*?[ \t]+group:[ \t]*(.+)$/m);
-  assert.ok(match, "the gate workflow declares no concurrency group, so every run of it queues behind every other");
-  return match[1].trim();
+  const lines = source.split("\n");
+  const start = lines.indexOf("concurrency:");
+  assert.notEqual(
+    start,
+    -1,
+    "the gate workflow declares no top-level concurrency block, so every run of it queues behind every other",
+  );
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!/^[ \t]/.test(line)) break;
+    const group = line.match(/^[ \t]+group:[ \t]*(.+)$/);
+    if (group) return group[1].trim();
+  }
+  return assert.fail("the gate workflow's concurrency block declares no group");
 }
 
 const PR_KEYED =
