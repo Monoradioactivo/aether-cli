@@ -45,12 +45,10 @@ function runCli(args: string[]): { exitCode: number | null; helpShown: boolean; 
         return originalShowHelp.apply(parser, rest);
       };
 
-      try {
-        require("../script/cli");
-      } catch (e: any) {
-        if (!String(e.message).startsWith("__EXIT_")) {
-          throw e;
-        }
+      require("../script/cli");
+    } catch (e: any) {
+      if (!String(e.message).startsWith("__EXIT_")) {
+        throw e;
       }
     } finally {
       process.argv = originalArgv;
@@ -110,6 +108,29 @@ describe("cli entry point", () => {
       expect(helpShown).toBe(true);
       expect(executeCalled).toBe(false);
       expect(errorOutput()).not.toContain("Unknown command");
+    });
+
+    it("exits 1 when flags are passed with no command", () => {
+      const { exitCode, executeCalled } = runCli(["--nonsense"]);
+      expect(exitCode).toBe(1);
+      expect(executeCalled).toBe(false);
+      expect(errorOutput()).toContain("Not enough non-option arguments: got 0, need at least 1");
+      expect(errorOutput()).toContain("Usage: aether <command>");
+    });
+
+    it("exits 1 when a short option is passed with no command", () => {
+      const { exitCode, executeCalled } = runCli(["-x"]);
+      expect(exitCode).toBe(1);
+      expect(executeCalled).toBe(false);
+      expect(errorOutput()).toContain("Not enough non-option arguments: got 0, need at least 1");
+    });
+
+    it("exits 0 for -v, --version, and --help", () => {
+      for (const args of [["-v"], ["--version"], ["--help"]]) {
+        const { exitCode, executeCalled } = runCli(args);
+        expect(exitCode).toBe(0);
+        expect(executeCalled).toBe(false);
+      }
     });
 
     it("proceeds to execute() when a valid command is parsed", () => {

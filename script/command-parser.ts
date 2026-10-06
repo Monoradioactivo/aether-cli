@@ -1683,7 +1683,7 @@ export function createCommand(): cli.ICommand {
     return cmd;
   }
 
-  parseFailed = wasHelpShown && (!argv._ || argv._.length > 0);
+  parseFailed = wasHelpShown && process.argv.slice(2).length > 0;
   return cmd;
 }
 
