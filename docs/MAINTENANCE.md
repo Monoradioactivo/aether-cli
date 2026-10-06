@@ -111,6 +111,43 @@ Releases come from release-please. Nobody pushes version tags by hand.
 3. Merging the release PR creates the tag and the GitHub release. The `Publish to npm` job then runs the tests, builds,
    checks that the tag matches `package.json`, and publishes with `npm publish --provenance --access public`.
 
+### How the gate's runs are kept apart
+
+This section describes all four npm gate repositories: `aether-cli`, `aetherpush-sdk`, `aether-expo-plugin` and
+`aetherpush-deploy-action`. They carry the same workflow, and only this repository documents it.
+
+Pull request runs are keyed by pull request number, and scheduled and dispatched runs share one `schedule` group.
+Before, every run of the workflow shared a single group, so one pull request's event cancelled a gate run another
+pull request was waiting on, and a run cancelled while pending leaves no check run behind.
+
+Pull request runs may arm auto-merge here. That is the deliberate difference from `aether-server`, where only
+scheduled and dispatched runs arm: these repositories have no release train to protect, and GitHub executes only a
+few of the 48 daily cron slots, so waiting for a scheduled run would hold each release for hours instead of the
+minutes a pull request run takes. The arm is still backed by the required `Release auto-merge gate` check and the
+strict up-to-date policy, so it fires only on a head whose newest gate check passed.
+
+Because scheduled and pull request runs now overlap, all three steps that touch an arm are written for a pull
+request another run may be acting on at the same moment:
+
+- `Arm the merge` reads the pull request's state first, leaves it alone when another run already armed or merged it,
+  and re-reads instead of failing when a merge call is refused.
+- `Hold the release for a human` compares the arm's `enabledAt` with this run's `run_started_at` and leaves an arm
+  placed after this run started in place, because that arm carries a verdict at least as new as this one's. It
+  still comments the reasons it found.
+- `Disarm if this run failed` runs only when this run armed the pull request itself or its own gate refused the
+  release. A run that broke before it armed anything no longer takes away an arm it did not place.
+
+Without those three, a single transient API read, or a verdict from an older head, would strip a healthy arm and
+the release would wait for the next executed scheduled slot, which is the stall this is meant to remove.
+
+A release pull request that falls behind `main` is brought up to date by the behind bot (`behind-bot.yml`) once it
+is armed; when it cannot, it comments on the pull request and notifies the ops Discord channel. An unarmed release
+pull request with a green gate check is outside the bot's scope by design, and the next gate run arms it. Two cases
+leave a green release pull request unarmed until a later run: the required-check confirmation refusing, which the run
+summary explains, and a gate run whose compare call fails, which is reported on the pull request as a truncated
+compare range and, when no newer arm is in place, disarms the release. Both wait for the next scheduled slot GitHub
+actually executes.
+
 ## Dependency updates
 
 Renovate (`renovate.json`) is the only dependency updater. Dependabot is not configured: there is no
