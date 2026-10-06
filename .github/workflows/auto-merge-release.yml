@@ -110,7 +110,6 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           CHECKS_GH_TOKEN: ${{ github.token }}
-          VERIFIED_LABEL_ACTORS: ${{ vars.VERIFIED_LABEL_ACTORS }}
           PR: ${{ steps.pr.outputs.number }}
         run: node "$GATE_SCRIPT" "$PR"
 

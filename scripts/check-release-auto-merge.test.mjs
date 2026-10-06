@@ -748,3 +748,14 @@ test("importing the module without GITHUB_REPOSITORY does not exit the process",
   assert.match(result.stdout, /STILL ALIVE/);
   assert.doesNotMatch(result.stderr, /GITHUB_REPOSITORY is required/);
 });
+
+test("label-actor allowlist is code-only and not wired to a repository variable", () => {
+  const scriptSource = readFileSync(scriptPath, "utf8");
+  const workflowSource = readFileSync(
+    join(scriptDir, "..", ".github", "workflows", "auto-merge-release.yml"),
+    "utf8",
+  );
+  assert.doesNotMatch(scriptSource, /VERIFIED_LABEL_ACTORS/);
+  assert.doesNotMatch(workflowSource, /VERIFIED_LABEL_ACTORS/);
+  assert.match(scriptSource, /LABEL_ACTORS = DEFAULT_LABEL_ACTOR_ALLOWLIST/);
+});
