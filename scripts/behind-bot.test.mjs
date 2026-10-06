@@ -268,11 +268,58 @@ test("an UNKNOWN merge state is polled until GitHub computes it", async () => {
   assert.equal(github.calls.mergeStatePolls, 2);
 });
 
-test("a merge state that is not BEHIND is left alone", async () => {
-  const github = fakeGitHub({ prs: [pr(1, { mergeStateStatus: "BLOCKED" }), pr(2, { mergeStateStatus: "CLEAN" })] });
-  const { result } = await exec(github);
+test("a merge state that is not BEHIND or BLOCKED is left alone", async () => {
+  const github = fakeGitHub({ prs: [pr(1, { mergeStateStatus: "CLEAN" }), pr(2, { mergeStateStatus: "UNSTABLE" })] });
+  const { result, notices } = await exec(github);
   assert.deepEqual(result, { action: "none", failures: 0 });
   assert.deepEqual(github.calls.updates, []);
+  assert.deepEqual(notices, []);
+});
+
+test("BLOCKED with passing required checks is reported once per head and never updated", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const options = { prs: [blocked, pr(2, { mergeStateStatus: "CLEAN" })] };
+  const first = fakeGitHub(options);
+  const run1 = await exec(first);
+  assert.deepEqual(run1.result, { action: "none", failures: 1 });
+  assert.deepEqual(first.calls.updates, []);
+  assert.equal(run1.notices.length, 1);
+  assert.match(run1.notices[0], /BLOCKED \(for example a code-scanning alert\)/);
+  assert.equal(first.calls.comments.length, 1);
+  assert.match(first.calls.comments[0].body, new RegExp(`<!-- behind-bot:blocked:${blocked.headRefOid} -->`));
+  assert.ok(run1.lines.some((line) => line.includes("required checks pass but GitHub still reports")));
+
+  const second = fakeGitHub({ ...options, comments: { 1: [{ login: BOT, body: first.calls.comments[0].body }] } });
+  const run2 = await exec(second);
+  assert.deepEqual(second.calls.updates, []);
+  assert.equal(second.calls.comments.length, 0);
+  assert.equal(run2.notices.length, 0);
+  assert.equal(run2.result.failures, 0);
+  assert.ok(run2.lines.some((line) => line.includes("already reported for head")));
+});
+
+test("a blocked marker on the head stops a later BEHIND update of that head", async () => {
+  const behind = pr(1);
+  const github = fakeGitHub({
+    prs: [behind, pr(2)],
+    comments: { 1: [{ login: BOT, body: `${markerFor("blocked", behind.headRefOid, MAIN)}\ntext` }] },
+  });
+  const { result } = await exec(github);
+  assert.deepEqual(github.calls.updates.map((call) => call.number), [2]);
+  assert.equal(result.pr, 2);
+});
+
+test("BLOCKED with a failing required check is skipped without a notice", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const github = fakeGitHub({
+    prs: [blocked, pr(2, { mergeStateStatus: "CLEAN" })],
+    checks: { [blocked.headRefOid]: [{ id: 1, name: "YAML lint", status: "completed", conclusion: "failure" }] },
+  });
+  const { result, notices } = await exec(github);
+  assert.deepEqual(result, { action: "none", failures: 0 });
+  assert.deepEqual(github.calls.updates, []);
+  assert.deepEqual(notices, []);
+  assert.deepEqual(github.calls.comments, []);
 });
 
 test("a moved head, a conflict or a transient error moves on silently", async () => {
