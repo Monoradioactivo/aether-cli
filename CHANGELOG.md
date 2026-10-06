@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.5](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.4...v0.9.5) (2026-10-06)
+
+
+### Bug Fixes
+
+* **cli:** exit 1 when flags are passed without a command ([#169](https://github.com/Monoradioactivo/aether-cli/issues/169)) ([15ffd93](https://github.com/Monoradioactivo/aether-cli/commit/15ffd93f8558de35b4a90ab31f0b7a887d1d7cb1))
+
 ## [0.9.4](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.3...v0.9.4) (2026-10-03)
 
 
