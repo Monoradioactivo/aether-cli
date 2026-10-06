@@ -19,11 +19,7 @@ const REPO = process.env.GITHUB_REPOSITORY;
 const LABEL = process.env.VERIFIED_LABEL || DEFAULT_VERIFIED_LABEL;
 const RELEASE_BOT_LOGIN = process.env.RELEASE_BOT_LOGIN || DEFAULT_RELEASE_BOT_LOGIN;
 const RENOVATE_BOT_LOGIN = process.env.RENOVATE_BOT_LOGIN || DEFAULT_RENOVATE_BOT_LOGIN;
-const configuredLabelActors = (process.env.VERIFIED_LABEL_ACTORS || "")
-  .split(",")
-  .map((actor) => actor.trim())
-  .filter((actor) => actor.length > 0);
-const LABEL_ACTORS = configuredLabelActors.length > 0 ? configuredLabelActors : DEFAULT_LABEL_ACTOR_ALLOWLIST;
+const LABEL_ACTORS = DEFAULT_LABEL_ACTOR_ALLOWLIST;
 
 function gh(args, env = process.env) {
   return execFileSync("gh", args, {
