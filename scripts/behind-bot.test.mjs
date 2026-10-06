@@ -480,6 +480,39 @@ test("a server release arm from an earlier UTC day is not updated, and a train h
   assert.deepEqual(held.result, { action: "train-hold", failures: 0 });
 });
 
+test("an armed BEHIND release pull request is updated here, where no train holds it", async () => {
+  const release = pr(10, {
+    headRefName: "release-please--branches--main",
+    author: BOT_GRAPHQL,
+    armedAt: "2026-09-18T15:23:00Z",
+  });
+  const github = fakeGitHub({ prs: [release] });
+  const { result, lines } = await exec(github, { now: new Date("2026-09-21T21:50:00Z") });
+  assert.deepEqual(result, { action: "updated", pr: 10, head: "n".repeat(40), failures: 0 });
+  assert.deepEqual(github.calls.updates, [{ number: 10, expected: release.headRefOid }]);
+  assert.ok(lines.some((line) => line.startsWith("Updated #10 from")));
+
+  const held = await exec(fakeGitHub({ prs: [release] }), {
+    config: SERVER_CONFIG,
+    now: new Date("2026-09-21T21:50:00Z"),
+  });
+  assert.deepEqual(
+    held.result,
+    { action: "none", failures: 0 },
+    "the same pull request is updated under a train too, so this test would pass on a bot that ignores the train rather than on one that has none",
+  );
+});
+
+test("this repository's behind bot is wired without a train, so a release arm never ages out of its reach", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const workflow = readFileSync(join(here, "..", ".github", "workflows", "behind-bot.yml"), "utf8");
+  assert.doesNotMatch(
+    workflow,
+    /TRAIN_[A-Z_]*\s*(:|=)/,
+    "the workflow names a TRAIN_ variable, by YAML key or by a write to GITHUB_ENV, so configFromEnv builds a train and an armed release pull request from an earlier UTC day is skipped instead of updated",
+  );
+});
+
 test("configuration reads the train only when a cutoff is set", () => {
   assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO }).train, null);
   assert.deepEqual(

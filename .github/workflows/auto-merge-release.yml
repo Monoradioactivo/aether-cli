@@ -13,7 +13,7 @@ on:
         default: true
 
 concurrency:
-  group: auto-merge-release
+  group: auto-merge-release-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'schedule' }}
   cancel-in-progress: false
 
 permissions:
@@ -175,16 +175,61 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR: ${{ steps.pr.outputs.number }}
         run: |
-          STATUS=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json mergeStateStatus --jq .mergeStateStatus)
+          facts() {
+            gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+              --json state,mergeStateStatus,autoMergeRequest \
+              --jq '[.state, .mergeStateStatus, (.autoMergeRequest != null)] | @tsv'
+          }
+
+          settled_elsewhere() {
+            SETTLED=$(facts) || return 1
+            SETTLED_STATE=$(printf '%s' "$SETTLED" | cut -f1)
+            SETTLED_ARMED=$(printf '%s' "$SETTLED" | cut -f3)
+            if [ "$SETTLED_STATE" = "MERGED" ]; then
+              echo "result=merged" >> "$GITHUB_OUTPUT"
+              echo "Left #$PR alone: another run merged it while this one was arming." >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
+            if [ "$SETTLED_STATE" = "OPEN" ] && [ "$SETTLED_ARMED" = "true" ]; then
+              echo "result=auto" >> "$GITHUB_OUTPUT"
+              echo "Left #$PR alone: another run armed it while this one was arming." >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
+            return 1
+          }
+
+          CURRENT=$(facts)
+          PR_STATE=$(printf '%s' "$CURRENT" | cut -f1)
+          STATUS=$(printf '%s' "$CURRENT" | cut -f2)
+          ARMED=$(printf '%s' "$CURRENT" | cut -f3)
+
+          if [ "$PR_STATE" != "OPEN" ]; then
+            echo "Nothing to arm on #$PR: it is $PR_STATE." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$ARMED" = "true" ]; then
+            echo "result=auto" >> "$GITHUB_OUTPUT"
+            echo "Auto-merge on #$PR was already armed by another run (merge state $STATUS)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "$STATUS" = "CLEAN" ]; then
-            gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash
-            echo "result=merged" >> "$GITHUB_OUTPUT"
-            echo "Merged #$PR directly; its required checks were already green." >> "$GITHUB_STEP_SUMMARY"
-          else
-            gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --auto
+            if gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash; then
+              echo "result=merged" >> "$GITHUB_OUTPUT"
+              echo "Merged #$PR directly; its required checks were already green." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            settled_elsewhere && exit 0
+            echo "::error::Could not merge #$PR, and no other run merged or armed it."
+            exit 1
+          fi
+          if gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --auto; then
             echo "result=auto" >> "$GITHUB_OUTPUT"
             echo "Auto-merge armed on #$PR (merge state $STATUS)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          settled_elsewhere && exit 0
+          echo "::error::Could not arm auto-merge on #$PR, and no other run merged or armed it."
+          exit 1
 
       - name: Re-evaluate the pull request check after a scheduled recovery
         if: steps.arm.outputs.result == 'auto' && github.event_name != 'pull_request'
@@ -239,7 +284,14 @@ jobs:
           PR: ${{ steps.pr.outputs.number }}
         run: |
           set -o pipefail
-          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --disable-auto || true
+          STARTED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at || true)
+          ARMED_AT=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json autoMergeRequest \
+            --jq '.autoMergeRequest.enabledAt // empty' || true)
+          if [ -n "$ARMED_AT" ] && [ -n "$STARTED" ] && [ "$ARMED_AT" \> "$STARTED" ]; then
+            echo "Left the arm on #$PR in place: another run placed it at $ARMED_AT, after this run started at $STARTED, so it carries a verdict at least as new as this one." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --disable-auto || true
+          fi
           if ! REPORTED=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
             --jq '.[] | select((.body // "") | startswith("<!-- release-auto-merge-gate")) | .body | split("\n")[0] | rtrimstr("\r")' \
             | tail -n 1); then
@@ -268,7 +320,7 @@ jobs:
           echo "Commented on #$PR: its reasons differ from the newest hold comment there." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Disarm if this run failed
-        if: failure() && steps.pr.outputs.number != ''
+        if: failure() && steps.pr.outputs.number != '' && (steps.arm.outputs.result == 'auto' || steps.gate.outputs.ok == 'false')
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR: ${{ steps.pr.outputs.number }}

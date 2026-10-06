@@ -749,6 +749,192 @@ test("importing the module without GITHUB_REPOSITORY does not exit the process",
   assert.doesNotMatch(result.stderr, /GITHUB_REPOSITORY is required/);
 });
 
+const gateWorkflowPath = join(scriptDir, "..", ".github", "workflows", "auto-merge-release.yml");
+
+function gateWorkflowSource() {
+  return readFileSync(gateWorkflowPath, "utf8");
+}
+
+function concurrencyGroup(source = gateWorkflowSource()) {
+  const match = source.match(/^concurrency:\n(?:[ \t]+.*\n)*?[ \t]+group:[ \t]*(.+)$/m);
+  assert.ok(match, "the gate workflow declares no concurrency group, so every run of it queues behind every other");
+  return match[1].trim();
+}
+
+const PR_KEYED =
+  /^github\.event_name == '([^']+)' && github\.event\.pull_request\.number \|\| '([^']*)'$/;
+
+function renderGroup(template, context) {
+  return String(template).replace(/\$\{\{(.*?)\}\}/g, (_match, expression) => {
+    const source = expression.trim();
+    const keyed = source.match(PR_KEYED);
+    if (!keyed) {
+      assert.fail(
+        `unrecognised concurrency expression \`${source}\`: teach this test what it renders to before changing the workflow`,
+      );
+    }
+    return context.event === keyed[1] ? String(context.prNumber) : keyed[2];
+  });
+}
+
+function assertPerPullRequestGroup(template) {
+  const one = renderGroup(template, { event: "pull_request", prNumber: 170 });
+  const another = renderGroup(template, { event: "pull_request", prNumber: 171 });
+  assert.notEqual(
+    one,
+    another,
+    "two pull requests share one concurrency group, so one pull request's event cancels the gate run another pull request is waiting on, and a cancelled pending run leaves no check behind",
+  );
+  const sameTwice = renderGroup(template, { event: "pull_request", prNumber: 170 });
+  assert.equal(one, sameTwice, "the group is not a function of the pull request number alone");
+  const scheduled = renderGroup(template, { event: "schedule", prNumber: null });
+  assert.notEqual(
+    one,
+    scheduled,
+    "a pull request event shares the scheduled group, so the recheck run queues behind the cron run that asked for it",
+  );
+  assert.equal(
+    scheduled,
+    renderGroup(template, { event: "workflow_dispatch", prNumber: null }),
+    "schedule and dispatch runs land in different groups, so a hotfix dispatch can run beside the cron run it duplicates",
+  );
+}
+
+function gateStepBody(name, source = gateWorkflowSource()) {
+  const lines = source.split("\n");
+  const start = lines.findIndex((line) => line.trim() === `- name: ${name}`);
+  assert.notEqual(start, -1, `the gate workflow has no '${name}' step`);
+  const indent = lines[start].search(/\S/);
+  const body = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() !== "" && line.search(/\S/) <= indent) break;
+    body.push(line);
+  }
+  return body.join("\n");
+}
+
+function assertArmSurvivesAParallelRun(body) {
+  const read = body.search(/autoMergeRequest/);
+  const merge = body.search(/gh pr merge/);
+  assert.notEqual(merge, -1, "the arm step no longer merges anything");
+  assert.notEqual(
+    read,
+    -1,
+    "the arm step never reads autoMergeRequest, so it calls gh pr merge --auto on a pull request another run armed a second earlier, and GitHub refuses that call",
+  );
+  assert.ok(
+    read < merge,
+    "the arm step merges before it reads autoMergeRequest, so a parallel run's arm reds this step and 'Disarm if this run failed' then takes that arm away",
+  );
+  assert.match(
+    body,
+    /if \[ "\$ARMED" = "true" \]; then\n\s*echo "result=auto" >> "\$GITHUB_OUTPUT"/,
+    "the arm step does not leave a pull request another run already armed alone, so the loser of the race calls gh pr merge --auto on an armed pull request",
+  );
+  const merges = body.split("\n").filter((candidate) => candidate.includes("gh pr merge"));
+  for (const line of merges) {
+    assert.match(
+      line,
+      /^\s*if\s+gh pr merge/,
+      `the arm step runs \`${line.trim()}\` outside an if, so a refusal from a race it cannot see fails the step instead of re-reading the pull request`,
+    );
+  }
+  assert.equal(
+    body.split("\n").filter((candidate) => /^\s*settled_elsewhere && exit 0$/.test(candidate)).length,
+    merges.length,
+    "a gh pr merge call in the arm step has no re-read behind it, so its refusal reds the step even when another run merged or armed the pull request a second earlier",
+  );
+}
+
+function assertFailureDisarmSparesAnotherRunsArm(workflow = gateWorkflowSource()) {
+  const lines = workflow.split("\n");
+  const start = lines.findIndex((line) => line.trim() === "- name: Disarm if this run failed");
+  assert.notEqual(start, -1, "the gate workflow has no 'Disarm if this run failed' step");
+  const condition = lines[start + 1];
+  assert.match(
+    condition,
+    /steps\.arm\.outputs\.result == 'auto' \|\| steps\.gate\.outputs\.ok == 'false'/,
+    "a run that failed before it armed anything still disarms, so one transient read in this workflow takes away the arm another run placed",
+  );
+}
+
+test("a pull request event keys the gate's concurrency group by its own pull request", () => {
+  assertPerPullRequestGroup(concurrencyGroup());
+});
+
+test("the shared group this card replaced fails the per-pull-request check", () => {
+  assert.throws(
+    () => assertPerPullRequestGroup("auto-merge-release"),
+    /two pull requests share one concurrency group/,
+  );
+});
+
+test("a group expression this test cannot render stops the suite instead of passing blind", () => {
+  assert.throws(
+    () =>
+      assertPerPullRequestGroup(
+        "auto-merge-release-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name }}",
+      ),
+    /unrecognised concurrency expression/,
+  );
+});
+
+test("the arm step reads the pull request before it merges, so parallel runs cannot disarm each other", () => {
+  assertArmSurvivesAParallelRun(gateStepBody("Arm the merge"));
+});
+
+test("an arm step that merges before reading the pull request fails that check", () => {
+  const planted = [
+    "        run: |",
+    '          STATUS=$(gh pr view "$PR" --json mergeStateStatus --jq .mergeStateStatus)',
+    '          if gh pr merge "$PR" --squash --auto; then',
+    '            echo "armed"',
+    "          fi",
+    '          echo "$STATUS autoMergeRequest"',
+  ].join("\n");
+  assert.throws(() => assertArmSurvivesAParallelRun(planted), /merges before it reads autoMergeRequest/);
+});
+
+test("an arm step whose merge is not guarded by an if fails that check", () => {
+  const planted = [
+    "        run: |",
+    '          FACTS=$(gh pr view "$PR" --json autoMergeRequest)',
+    '          if [ "$ARMED" = "true" ]; then',
+    '            echo "result=auto" >> "$GITHUB_OUTPUT"',
+    "            exit 0",
+    "          fi",
+    '          gh pr merge "$PR" --squash --auto',
+  ].join("\n");
+  assert.throws(() => assertArmSurvivesAParallelRun(planted), /outside an if/);
+});
+
+test("an arm step that drops the already-armed exit or a re-read fails that check", () => {
+  const body = gateStepBody("Arm the merge");
+  const withoutEarlyExit = body.replace(/if \[ "\$ARMED" = "true" \]; then\n\s*echo "result=auto" >> "\$GITHUB_OUTPUT"/, 'if [ "$ARMED" = "false" ]; then\n            echo "result=none" >> "$GITHUB_OUTPUT"');
+  assert.throws(
+    () => assertArmSurvivesAParallelRun(withoutEarlyExit),
+    /does not leave a pull request another run already armed alone/,
+  );
+  const withoutReRead = body.replace(/^\s*settled_elsewhere && exit 0$/m, "          exit 1");
+  assert.throws(
+    () => assertArmSurvivesAParallelRun(withoutReRead),
+    /has no re-read behind it/,
+  );
+});
+
+test("the failure disarm fires only where this run armed the pull request or its own gate refused it", () => {
+  assertFailureDisarmSparesAnotherRunsArm();
+});
+
+test("a disarm-on-failure that fires before this run armed anything fails that check", () => {
+  const planted = gateWorkflowSource().replace(
+    "if: failure() && steps.pr.outputs.number != '' && (steps.arm.outputs.result == 'auto' || steps.gate.outputs.ok == 'false')",
+    "if: failure() && steps.pr.outputs.number != ''",
+  );
+  assert.throws(() => assertFailureDisarmSparesAnotherRunsArm(planted), /still disarms/);
+});
+
 test("label-actor allowlist is code-only and not wired to a repository variable", () => {
   const scriptSource = readFileSync(scriptPath, "utf8");
   const workflowSource = readFileSync(

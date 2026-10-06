@@ -244,6 +244,12 @@ const RESOLVE_STUB = [
   '  "pr list") BODY="$STUB_OPEN_PULLS" ;;',
   '  "api repos/$GITHUB_REPOSITORY/pulls/"*) BODY="$STUB_PULL" ;;',
   '  "pr merge") exit 0 ;;',
+  '  "pr view")',
+  '    if [ "$STUB_PR_VIEW_FAIL" = "1" ]; then echo "stub: refusing the pull request read" >&2; exit 1; fi',
+  '    BODY="$STUB_PR_VIEW" ;;',
+  '  "api repos/$GITHUB_REPOSITORY/actions/runs/"*)',
+  '    if [ "$STUB_RUN_FAIL" = "1" ]; then echo "stub: refusing the run read" >&2; exit 1; fi',
+  '    BODY="$STUB_RUN" ;;',
   '  "pr comment")',
   '    cat >> "$GH_BODIES"',
   '    if [ "$STUB_COMMENT_FAIL" = "1" ]; then echo "stub: refusing to comment" >&2; exit 1; fi',
@@ -317,6 +323,11 @@ function runStep(doc, step, context) {
       STUB_COMMENTS: context.comments ?? "[]",
       STUB_COMMENTS_FAIL: context.commentsFail ?? "",
       STUB_COMMENT_FAIL: context.commentFail ?? "",
+      GITHUB_RUN_ID: "99",
+      STUB_RUN: context.run ?? JSON.stringify({ run_started_at: RUN_STARTED_AT }),
+      STUB_RUN_FAIL: context.runFail ?? "",
+      STUB_PR_VIEW: context.prView ?? JSON.stringify({ autoMergeRequest: null }),
+      STUB_PR_VIEW_FAIL: context.prViewFail ?? "",
       ...doc.env,
       ...stepEnv(step, context),
     },
@@ -337,6 +348,10 @@ function runStep(doc, step, context) {
     summary: readFileSync(summary, "utf8"),
   };
 }
+
+const RUN_STARTED_AT = "2026-10-06T12:00:00Z";
+const ARMED_BEFORE_RUN = "2026-10-06T11:59:30Z";
+const ARMED_AFTER_RUN = "2026-10-06T12:00:30Z";
 
 const MARKER_A = "<!-- release-auto-merge-gate:aaaaaaaaaaaaaaaa -->";
 const MARKER_B = "<!-- release-auto-merge-gate:bbbbbbbbbbbbbbbb -->";
@@ -366,6 +381,38 @@ function runHold(context) {
     ...context,
   });
 }
+
+function disarmCalls(calls) {
+  return calls.split("\n").filter((line) => line.includes("pr merge") && line.includes("--disable-auto"));
+}
+
+test("a hold leaves an arm another run placed after this run started", () => {
+  const result = runHold({ prView: JSON.stringify({ autoMergeRequest: { enabledAt: ARMED_AFTER_RUN } }) });
+  assert.deepEqual(
+    disarmCalls(result.calls),
+    [],
+    "the hold step disarmed an arm placed after this run started, so a verdict from an older head strips the arm a newer run placed and the release waits for the next executed slot",
+  );
+  assert.match(result.summary, /Left the arm on #42 in place/);
+  assert.match(result.bodies, /This release is held for a human merge/);
+});
+
+test("a hold disarms an arm this run's own verdict covers", () => {
+  const result = runHold({ prView: JSON.stringify({ autoMergeRequest: { enabledAt: ARMED_BEFORE_RUN } }) });
+  assert.equal(disarmCalls(result.calls).length, 1, "a release this run refused was left armed");
+});
+
+test("a hold with nothing armed still asks for the disarm, as it always did", () => {
+  const result = runHold({});
+  assert.equal(disarmCalls(result.calls).length, 1);
+});
+
+test("a hold whose arm read fails disarms rather than leaving an arm it could not judge", () => {
+  const onReadFailure = runHold({ prViewFail: "1" });
+  assert.equal(disarmCalls(onReadFailure.calls).length, 1, "an unreadable arm was left in place, so a refused release could still merge");
+  const onRunFailure = runHold({ runFail: "1", prView: JSON.stringify({ autoMergeRequest: { enabledAt: ARMED_AFTER_RUN } }) });
+  assert.equal(disarmCalls(onRunFailure.calls).length, 1, "an unreadable run start was treated as an arm worth keeping");
+});
 
 test("the hold step reads its marker from the gate, so the two never drift apart", () => {
   const steps = gateSteps();
