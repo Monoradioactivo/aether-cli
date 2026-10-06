@@ -282,6 +282,21 @@ export async function run({ github, config, now, sleep, notify, summary }) {
       mergeState = github.mergeStateStatus(pr.number);
     }
     summary(`#${pr.number}: merge state ${mergeState}.`);
+    if (mergeState === "BLOCKED") {
+      const checkState = checksOf(pr.headRefOid);
+      if (checkState === "passing") {
+        if (reportedMarker(github, pr, config, mainSha)) {
+          summary(`Skip #${pr.number}: already reported for head ${pr.headRefOid.slice(0, 7)}; waiting for a push to the branch.`);
+          continue;
+        }
+        if (await reportSkip({ github, notify, summary, pr, kind: "blocked", files: [], status: null, config, mainSha })) failures += 1;
+      } else if (checkState === "failing") {
+        summary(`Skip #${pr.number}: a required check failed on its head.`);
+      } else {
+        summary(`Skip #${pr.number}: required checks still running while merge state is BLOCKED.`);
+      }
+      continue;
+    }
     if (mergeState !== "BEHIND") continue;
     if (checksOf(pr.headRefOid) === "failing") {
       summary(`Skip #${pr.number}: a required check failed on its head.`);
@@ -331,12 +346,15 @@ export async function run({ github, config, now, sleep, notify, summary }) {
 const MARKER_PREFIX = "<!-- behind-bot:";
 
 export function markerFor(kind, headSha, mainSha) {
-  return kind === "workflows" ? `${MARKER_PREFIX}workflows:${headSha} -->` : `${MARKER_PREFIX}${kind}:${headSha}:${mainSha} -->`;
+  return kind === "workflows" || kind === "blocked"
+    ? `${MARKER_PREFIX}${kind}:${headSha} -->`
+    : `${MARKER_PREFIX}${kind}:${headSha}:${mainSha} -->`;
 }
 
 function reportedMarker(github, pr, config, mainSha) {
   const markers = [
     markerFor("workflows", pr.headRefOid, mainSha),
+    markerFor("blocked", pr.headRefOid, mainSha),
     markerFor("stalled", pr.headRefOid, mainSha),
     markerFor("refused", pr.headRefOid, mainSha),
   ];
@@ -348,6 +366,7 @@ function reportedMarker(github, pr, config, mainSha) {
 async function reportSkip({ github, notify, summary, pr, kind, files, status, config, mainSha }) {
   const reasons = {
     workflows: `main carries workflow changes (${workflowFiles(files).join(", ") || "file list truncated"}) that the release bot App cannot merge without the workflows permission`,
+    blocked: `required checks pass but GitHub still reports the pull request as BLOCKED (for example a code-scanning alert), which updating the branch cannot clear`,
     stalled: `GitHub accepted the update but the branch did not move within ${(HEAD_POLLS * HEAD_POLL_MS) / 1000} seconds`,
     refused: `GitHub refused the update (HTTP ${status ?? "unknown"})`,
   };
