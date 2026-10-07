@@ -63,16 +63,26 @@ export function isTrainDay(date, config) {
   return Boolean(config.train) && config.train.weekdays.includes(date.getUTCDay());
 }
 
-export function trainHold(prs, now, config) {
-  if (!isTrainDay(now, config)) return false;
-  if (utcTime(now) < config.train.updateCutoff) return false;
-  return prs.some(
-    (pr) =>
-      pr.armedAt &&
+function releaseArmedThisTrainDay(pr, now, config) {
+  return Boolean(
+    pr.armedAt &&
       isReleasePr(pr, config) &&
       utcDay(new Date(pr.armedAt)) === utcDay(now) &&
       utcTime(new Date(pr.armedAt)) < config.train.closes,
   );
+}
+
+export function trainHold(prs, now, config) {
+  if (!isTrainDay(now, config)) return false;
+  if (utcTime(now) < config.train.updateCutoff) return false;
+  return prs.some((pr) => releaseArmedThisTrainDay(pr, now, config));
+}
+
+export function trainReleaseWindow(prs, now, config) {
+  if (!config.train?.opens || !isTrainDay(now, config)) return false;
+  const time = utcTime(now);
+  if (time < config.train.opens || time >= config.train.closes) return false;
+  return prs.some((pr) => releaseArmedThisTrainDay(pr, now, config));
 }
 
 export function releaseArmIsCurrent(pr, now, config) {
@@ -259,14 +269,18 @@ export async function run({ github, config, now, sleep, notify, summary }) {
     return { action: "train-hold", failures };
   }
 
-  for (const pr of armed) {
+  const releaseOnly = trainReleaseWindow(armed, now, config);
+  const considered = releaseOnly ? armed.filter((pr) => isReleasePr(pr, config)) : armed;
+  if (releaseOnly) summary("Train window: only a release pull request armed today can be updated.");
+
+  for (const pr of considered) {
     if (isServingMain(heads.get(pr.number), mainSha, now) && checksOf(pr.headRefOid) === "pending") {
       summary(`No update: #${pr.number} already carries main ${mainSha.slice(0, 7)} and its required checks are still running.`);
       return { action: "serial-wait", pr: pr.number, failures };
     }
   }
 
-  for (const pr of orderCandidates(armed, heads, config)) {
+  for (const pr of orderCandidates(considered, heads, config)) {
     const skip = baseSkipReason(pr, config.repository);
     if (skip) {
       summary(`Skip #${pr.number}: ${skip}.`);
@@ -398,6 +412,7 @@ export function configFromEnv(env) {
   const train = env.TRAIN_UPDATE_CUTOFF_UTC
     ? {
         updateCutoff: env.TRAIN_UPDATE_CUTOFF_UTC,
+        opens: env.TRAIN_OPENS_UTC || null,
         closes: env.TRAIN_CLOSES_UTC,
         weekdays: String(env.TRAIN_WEEKDAYS ?? "1,4")
           .split(",")

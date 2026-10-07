@@ -19,6 +19,7 @@ import {
   sameLogin,
   touchesWorkflows,
   trainHold,
+  trainReleaseWindow,
 } from "./behind-bot.mjs";
 
 const REPO = "Monoradioactivo/aetherpush-deploy-action";
@@ -513,11 +514,118 @@ test("this repository's behind bot is wired without a train, so a release arm ne
   );
 });
 
+const WINDOW_CONFIG = {
+  ...SERVER_CONFIG,
+  train: { ...SERVER_CONFIG.train, opens: "15:00:00" },
+};
+
+function releaseAndFeature() {
+  return {
+    feature: pr(7),
+    release: pr(20, {
+      headRefName: "release-please--branches--main",
+      author: BOT_GRAPHQL,
+      armedAt: "2026-09-21T15:23:39Z",
+    }),
+  };
+}
+
+test("during the train window the bot updates only the release armed that day", async () => {
+  const monday = (time) => new Date(`2026-09-21T${time}Z`);
+  const { feature, release } = releaseAndFeature();
+
+  const atOpen = fakeGitHub({ prs: [feature, release] });
+  const opened = await exec(atOpen, { config: WINDOW_CONFIG, now: monday("15:00:00") });
+  assert.equal(opened.result.action, "updated");
+  assert.equal(opened.result.pr, 20);
+  assert.deepEqual(atOpen.calls.updates.map((call) => call.number), [20]);
+
+  const beforeOpen = await exec(fakeGitHub({ prs: [feature, release] }), {
+    config: WINDOW_CONFIG,
+    now: monday("14:59:59"),
+  });
+  assert.equal(beforeOpen.result.pr, 7);
+
+  const clean = fakeGitHub({
+    prs: [feature, { ...release, mergeStateStatus: "CLEAN" }],
+  });
+  const idle = await exec(clean, { config: WINDOW_CONFIG, now: monday("16:00:00") });
+  assert.deepEqual(idle.result, { action: "none", failures: 0 });
+  assert.deepEqual(clean.calls.updates, []);
+
+  const waiting = pr(7);
+  const queued = fakeGitHub({
+    prs: [waiting, release],
+    commits: {
+      [waiting.headRefOid]: { parents: [OLD_MAIN, MAIN], author: BOT, date: "2026-09-21T15:55:00Z" },
+    },
+    checks: {
+      [waiting.headRefOid]: [{ id: 1, name: "YAML lint", status: "in_progress", conclusion: null }],
+    },
+  });
+  const duringWait = await exec(queued, { config: WINDOW_CONFIG, now: monday("16:00:00") });
+  assert.equal(duringWait.result.action, "updated");
+  assert.equal(duringWait.result.pr, 20);
+
+  const heldAtCutoff = await exec(fakeGitHub({ prs: [feature, release] }), {
+    config: WINDOW_CONFIG,
+    now: monday("21:45:00"),
+  });
+  assert.deepEqual(heldAtCutoff.result, { action: "train-hold", failures: 0 });
+
+  const atClose = await exec(fakeGitHub({ prs: [feature, release] }), {
+    config: WINDOW_CONFIG,
+    now: monday("22:00:00"),
+  });
+  assert.deepEqual(atClose.result, { action: "train-hold", failures: 0 });
+
+  const afterClose = await exec(fakeGitHub({ prs: [pr(7), pr(8)] }), {
+    config: WINDOW_CONFIG,
+    now: monday("22:00:00"),
+  });
+  assert.equal(afterClose.result.pr, 7);
+
+  const tuesday = await exec(fakeGitHub({ prs: [feature, release] }), {
+    config: WINDOW_CONFIG,
+    now: new Date("2026-09-22T16:00:00Z"),
+  });
+  assert.equal(tuesday.result.pr, 7);
+
+  const noTrain = await exec(fakeGitHub({ prs: [feature, release] }), {
+    config: BASE_CONFIG,
+    now: monday("16:00:00"),
+  });
+  assert.equal(noTrain.result.pr, 7);
+});
+
+test("trainReleaseWindow is on from 15:00 until 22:00 on a train day only", () => {
+  const { release } = releaseAndFeature();
+  const monday = (time) => new Date(`2026-09-21T${time}Z`);
+  assert.equal(trainReleaseWindow([release], monday("15:00:00"), WINDOW_CONFIG), true);
+  assert.equal(trainReleaseWindow([release], monday("14:59:59"), WINDOW_CONFIG), false);
+  assert.equal(trainReleaseWindow([release], monday("21:45:00"), WINDOW_CONFIG), true);
+  assert.equal(trainReleaseWindow([release], monday("22:00:00"), WINDOW_CONFIG), false);
+  assert.equal(trainReleaseWindow([release], new Date("2026-09-22T16:00:00Z"), WINDOW_CONFIG), false);
+  assert.equal(trainReleaseWindow([release], monday("16:00:00"), BASE_CONFIG), false);
+  assert.equal(trainReleaseWindow([pr(7)], monday("16:00:00"), WINDOW_CONFIG), false);
+  assert.equal(trainHold([release], monday("21:45:00"), WINDOW_CONFIG), true);
+  assert.equal(trainHold([release], monday("22:00:00"), WINDOW_CONFIG), true);
+});
+
 test("configuration reads the train only when a cutoff is set", () => {
   assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO }).train, null);
   assert.deepEqual(
     configFromEnv({ GITHUB_REPOSITORY: REPO, TRAIN_UPDATE_CUTOFF_UTC: "21:45:00", TRAIN_CLOSES_UTC: "22:00:00" }).train,
-    { updateCutoff: "21:45:00", closes: "22:00:00", weekdays: [1, 4] },
+    { updateCutoff: "21:45:00", opens: null, closes: "22:00:00", weekdays: [1, 4] },
+  );
+  assert.equal(
+    configFromEnv({
+      GITHUB_REPOSITORY: REPO,
+      TRAIN_UPDATE_CUTOFF_UTC: "21:45:00",
+      TRAIN_OPENS_UTC: "15:00:00",
+      TRAIN_CLOSES_UTC: "22:00:00",
+    }).train.opens,
+    "15:00:00",
   );
 });
 
