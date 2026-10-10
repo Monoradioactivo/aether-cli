@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  symlinkSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -747,6 +755,86 @@ test("importing the module without GITHUB_REPOSITORY does not exit the process",
   assert.equal(result.status, 0);
   assert.match(result.stdout, /STILL ALIVE/);
   assert.doesNotMatch(result.stderr, /GITHUB_REPOSITORY is required/);
+});
+
+function entryFixture() {
+  const dir = mkdtempSync(join(tmpdir(), "release-gate-entry-"));
+  const output = join(dir, "github_output");
+  writeFileSync(output, "");
+  return { dir, output };
+}
+
+function runEntry(args, output) {
+  const result = spawnSync(process.execPath, args, {
+    env: { PATH: "", GITHUB_OUTPUT: output },
+    encoding: "utf8",
+    timeout: SPAWN_TIMEOUT_MS,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(result.error, undefined, `node could not be spawned: ${result.error && result.error.message}`);
+  assert.notEqual(result.signal, "SIGTERM", "the run did not finish inside the spawn timeout");
+
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    output: readFileSync(output, "utf8"),
+  };
+}
+
+function assertEntryPathFailure(run) {
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /ENOENT/);
+  assert.match(run.stderr, /realpathSync/);
+  assert.match(run.stderr, /check-release-auto-merge\.mjs:\d+/);
+  assert.doesNotMatch(run.stderr, /GITHUB_REPOSITORY is required/);
+  assert.equal(run.stdout, "");
+  assert.equal(run.output, "");
+}
+
+test("a symlinked entry runs the gate", () => {
+  const { dir, output } = entryFixture();
+  const link = join(dir, "gate-link.mjs");
+  symlinkSync(scriptPath, link);
+
+  const run = runEntry([link], output);
+
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /GITHUB_REPOSITORY is required/);
+});
+
+test("a symlinked entry that stops resolving fails the run instead of exiting 0 without a verdict", () => {
+  const { dir, output } = entryFixture();
+  const link = join(dir, "gate-link.mjs");
+  symlinkSync(scriptPath, link);
+  const preload = join(dir, "remove-entry.mjs");
+  writeFileSync(preload, `import { unlinkSync } from "node:fs";\nunlinkSync(${JSON.stringify(link)});\n`);
+
+  const run = runEntry(["--import", pathToFileURL(preload).href, link], output);
+
+  assert.equal(existsSync(link), false, "the preload left the entry in place, so the guard never met a path it could not resolve");
+  assertEntryPathFailure(run);
+});
+
+test("a module whose own path stops resolving fails the import instead of passing as one", () => {
+  const { dir, output } = entryFixture();
+  const copy = join(dir, "check-release-auto-merge.mjs");
+  copyFileSync(scriptPath, copy);
+  copyFileSync(join(scriptDir, "release-auto-merge-gate.mjs"), join(dir, "release-auto-merge-gate.mjs"));
+  writeFileSync(
+    join(dir, "remove-module.mjs"),
+    `import { unlinkSync } from "node:fs";\nunlinkSync(${JSON.stringify(copy)});\n`,
+  );
+  const importer = join(dir, "importer.mjs");
+  writeFileSync(
+    importer,
+    'import "./remove-module.mjs";\nimport "./check-release-auto-merge.mjs";\nconsole.log("IMPORTED");\n',
+  );
+
+  const run = runEntry([importer], output);
+
+  assert.equal(existsSync(copy), false, "the importer left the module in place, so the guard never met a path it could not resolve");
+  assertEntryPathFailure(run);
 });
 
 const gateWorkflowPath = join(scriptDir, "..", ".github", "workflows", "auto-merge-release.yml");
