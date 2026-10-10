@@ -286,14 +286,6 @@ function main() {
 }
 
 const entry = process.argv[1];
-if (entry) {
-  let isCli = false;
-  try {
-    isCli = realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    isCli = entry === fileURLToPath(import.meta.url);
-  }
-  if (isCli) {
-    main();
-  }
+if (entry && realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))) {
+  main();
 }
