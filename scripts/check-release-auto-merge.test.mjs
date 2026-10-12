@@ -670,7 +670,7 @@ test("release-please's own commit is vouched by its author", () => {
   assert.doesNotMatch(run.stderr, /UNEXPECTED_CHECK_RUNS_CALL/);
 });
 
-test("a release-shaped commit from another author is not vouched for as a release", () => {
+test("a release-shaped commit from another author is refused by name", () => {
   const run = runGate({
     env: {
       STUB_COMPARE: compareBody([{ sha: MERGE_SHA, message: "chore(main): release 3.15.2 (#448)" }]),
@@ -687,7 +687,11 @@ test("a release-shaped commit from another author is not vouched for as a releas
   assert.equal(run.verdict.ok, false);
   assert.equal(run.verdict.commits[0].blessed, false);
   assert.equal(run.verdict.commits[0].via, null);
-  assert.match(run.verdict.reasons[0], /carries neither a Brief-Verified trailer nor the brief-verified label/);
+  assert.equal(run.verdict.commits[0].refusedReleaseAuthor, true);
+  assert.match(
+    run.verdict.reasons[0],
+    /looks like a release-please commit, but its author is not-the-release-bot, not aetherpush-release-bot\[bot\]/,
+  );
 });
 
 test("running without GITHUB_REPOSITORY still exits 2 and says so", () => {

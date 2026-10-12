@@ -315,6 +315,37 @@ test("a release-shaped commit from a non-bot author is not blessed via the relea
   assert.equal(result.blessed, false);
   assert.equal(result.via, null);
   assert.equal(result.unresolved, undefined);
+  assert.equal(result.refusedReleaseAuthor, true);
+  assert.equal(result.releaseAuthor, "some-human");
+  assert.equal(result.releaseBotLogin, "aetherpush-release-bot[bot]");
+});
+
+test("a refused release-bot author mismatch names expected and actual in the verdict", () => {
+  const humanRelease = () => ({
+    number: 218,
+    labels: ["autorelease: tagged"],
+    author: "some-human",
+  });
+  const commits = [
+    classifyCommit({ sha: "a3456c9000", message: "chore(main): release 3.4.4" }, humanRelease),
+  ];
+  const verdict = buildVerdict({
+    baseTag: "v1.0.0",
+    commits,
+    currentVersion: "1.0.0",
+    releaseVersion: "1.0.1",
+  });
+  assert.equal(verdict.ok, false);
+  assert.ok(
+    verdict.reasons.some(
+      (reason) =>
+        reason.includes("#218") &&
+        reason.includes("a3456c9") &&
+        reason.includes("some-human") &&
+        reason.includes("aetherpush-release-bot[bot]") &&
+        !reason.includes("neither a Brief-Verified trailer"),
+    ),
+  );
 });
 
 test("a release-shaped commit with a missing author fails closed as unresolved", () => {

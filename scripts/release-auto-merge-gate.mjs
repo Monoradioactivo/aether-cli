@@ -98,6 +98,7 @@ export function classifyCommit(
   if (!Array.isArray(labels)) {
     return { sha, pr: number, subject, blessed: false, via: null, unresolved: true };
   }
+  let refusedReleaseAuthor = null;
   if (labels.some((name) => String(name).startsWith("autorelease:")) && RELEASE_SUBJECT.test(subject)) {
     if (resolved.authorUnread) {
       return { sha, pr: number, subject, blessed: false, via: null, unresolved: true };
@@ -109,6 +110,7 @@ export function classifyCommit(
     if (author === releaseBotLogin) {
       return { sha, pr: number, subject, blessed: true, via: "release-please pull request" };
     }
+    refusedReleaseAuthor = { expected: releaseBotLogin, actual: author };
   }
 
   const labelVia = `${label} label`;
@@ -124,6 +126,18 @@ export function classifyCommit(
   if (!via) {
     if (resolved.authorUnread) {
       return { sha, pr: number, subject, blessed: false, via: null, unresolved: true };
+    }
+    if (refusedReleaseAuthor) {
+      return {
+        sha,
+        pr: number,
+        subject,
+        blessed: false,
+        via: null,
+        refusedReleaseAuthor: true,
+        releaseBotLogin: refusedReleaseAuthor.expected,
+        releaseAuthor: refusedReleaseAuthor.actual,
+      };
     }
     return { sha, pr: number, subject, blessed: false, via: null };
   }
@@ -200,6 +214,12 @@ export function buildVerdict({
         `#${commit.pr} (${commit.sha}) carries the ${label} label, but it was applied by ${
           commit.labelActor == null ? "an unknown actor" : commit.labelActor
         }, whose vouch this gate does not accept`,
+      );
+    } else if (commit.refusedReleaseAuthor) {
+      reasons.push(
+        `#${commit.pr} (${commit.sha}) looks like a release-please commit, but its author is ${
+          commit.releaseAuthor == null ? "unknown" : commit.releaseAuthor
+        }, not ${commit.releaseBotLogin}`,
       );
     } else if (commit.missingTest) {
       if (commit.pr) {
