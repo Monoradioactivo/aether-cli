@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   baseSkipReason,
@@ -693,4 +695,94 @@ test("the workflow keeps event data out of run and mints exactly contents and pu
   assert.doesNotMatch(workflow, /ref: \$\{\{ github\.event/);
   assert.match(workflow, /head_repository\.full_name == github\.repository/);
   assert.doesNotMatch(workflow, /conclusion == 'cancelled'/);
+});
+
+const entryScript = join(dirname(fileURLToPath(import.meta.url)), "behind-bot.mjs");
+const ENTRY_SPAWN_TIMEOUT_MS = 30_000;
+
+function entryFixture(t) {
+  const dir = mkdtempSync(join(tmpdir(), "behind-bot-entry-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function runEntry(dir, args) {
+  const result = spawnSync(process.execPath, args, {
+    env: {
+      PATH: dir,
+      GITHUB_REPOSITORY: "Monoradioactivo/behind-bot-fixture",
+      READ_TOKEN: "stub-read-token",
+      UPDATE_TOKEN: "stub-update-token",
+    },
+    encoding: "utf8",
+    timeout: ENTRY_SPAWN_TIMEOUT_MS,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(result.error, undefined, `the run did not finish: ${result.error && result.error.message}`);
+
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function assertEntryPathFailure(run) {
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /ENOENT/);
+  assert.match(run.stderr, /realpathSync/);
+  assert.match(run.stderr, /behind-bot\.mjs:\d+/);
+  assert.doesNotMatch(run.stderr, /spawnSync gh/);
+  assert.equal(run.stdout, "");
+}
+
+test("a symlinked entry runs the bot as far as its first GitHub read", (t) => {
+  const dir = entryFixture(t);
+  const link = join(dir, "bot-link.mjs");
+  symlinkSync(entryScript, link);
+
+  const run = runEntry(dir, [link]);
+
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /spawnSync gh ENOENT/);
+});
+
+test("a symlinked entry that stops resolving fails the run instead of exiting 0 without running", (t) => {
+  const dir = entryFixture(t);
+  const link = join(dir, "bot-link.mjs");
+  symlinkSync(entryScript, link);
+  const preload = join(dir, "remove-entry.mjs");
+  writeFileSync(preload, `import { unlinkSync } from "node:fs";\nunlinkSync(${JSON.stringify(link)});\n`);
+
+  const run = runEntry(dir, ["--import", pathToFileURL(preload).href, link]);
+
+  assert.equal(existsSync(link), false, "the preload left the entry in place, so the guard never met a path it could not resolve");
+  assertEntryPathFailure(run);
+});
+
+test("a module whose own path stops resolving fails the import instead of passing as one", (t) => {
+  const dir = entryFixture(t);
+  const copy = join(dir, "behind-bot.mjs");
+  copyFileSync(entryScript, copy);
+  writeFileSync(
+    join(dir, "remove-module.mjs"),
+    `import { unlinkSync } from "node:fs";\nunlinkSync(${JSON.stringify(copy)});\n`,
+  );
+  const importer = join(dir, "importer.mjs");
+  writeFileSync(importer, 'import "./remove-module.mjs";\nimport "./behind-bot.mjs";\nconsole.log("IMPORTED");\n');
+
+  const run = runEntry(dir, [importer]);
+
+  assert.equal(existsSync(copy), false, "the importer left the module in place, so the guard never met a path it could not resolve");
+  assertEntryPathFailure(run);
+});
+
+test("importing the module runs no bot", (t) => {
+  const dir = entryFixture(t);
+
+  const run = runEntry(dir, [
+    "--input-type=module",
+    "-e",
+    `await import(${JSON.stringify(pathToFileURL(entryScript).href)});\nconsole.log("IMPORTED");`,
+  ]);
+
+  assert.equal(run.status, 0);
+  assert.equal(run.stdout, "IMPORTED\n");
+  assert.doesNotMatch(run.stderr, /spawnSync gh/);
 });
