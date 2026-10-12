@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { appendFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 export const RENOVATE_LOGINS = new Set(["renovate[bot]", "app/renovate", "renovate"]);
 const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"]);
@@ -472,6 +472,7 @@ async function main() {
   if (result.failures > 0) process.exitCode = 1;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+const entry = process.argv[1];
+if (entry && realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))) {
   await main();
 }
