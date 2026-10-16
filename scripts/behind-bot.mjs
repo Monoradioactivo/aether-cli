@@ -48,7 +48,8 @@ export function isRenovate(login) {
 }
 
 export function isReleasePr(pr, config) {
-  return pr.headRefName.startsWith(config.releaseBranchPrefix) || sameLogin(pr.author, config.releaseBotLogin);
+  if (pr.headRefName.startsWith(config.releaseBranchPrefix)) return true;
+  return sameLogin(pr.author, config.releaseBotLogin) && pr.headRefName !== config.revendorBranch;
 }
 
 export function utcDay(date) {
@@ -90,11 +91,23 @@ export function releaseArmIsCurrent(pr, now, config) {
   return utcDay(new Date(pr.armedAt)) === utcDay(now);
 }
 
+function finishedAt(run) {
+  if (run.status !== "completed") return Infinity;
+  const time = Date.parse(run.completed_at);
+  return Number.isNaN(time) ? -Infinity : time;
+}
+
+function finishedLater(run, previous) {
+  const time = finishedAt(run);
+  const previousTime = finishedAt(previous);
+  return time > previousTime || (time === previousTime && run.id > previous.id);
+}
+
 export function requiredCheckState(requiredContexts, checkRuns, statuses) {
   const latest = new Map();
   for (const run of checkRuns) {
     const previous = latest.get(run.name);
-    if (!previous || run.id > previous.id) latest.set(run.name, run);
+    if (!previous || finishedLater(run, previous)) latest.set(run.name, run);
   }
   const statusByContext = new Map(statuses.map((status) => [status.context, status.state]));
   let pending = false;
@@ -201,7 +214,7 @@ export function createGitHub({ gh, repository, readToken, updateToken }) {
         "api",
         `repos/${repository}/commits/${sha}/check-runs?per_page=100`,
         "--jq",
-        "[.check_runs[] | {id, name, status, conclusion}]",
+        "[.check_runs[] | {id, name, status, conclusion, completed_at}]",
       ]),
     statuses: (sha) =>
       readJson(["api", `repos/${repository}/commits/${sha}/status`, "--jq", "[.statuses[] | {context, state}]"]),
@@ -423,6 +436,7 @@ export function configFromEnv(env) {
     repository: env.GITHUB_REPOSITORY,
     releaseBranchPrefix: env.RELEASE_BRANCH_PREFIX,
     releaseBotLogin: env.RELEASE_BOT_LOGIN,
+    revendorBranch: env.REVENDOR_BRANCH || null,
     train,
   };
 }
