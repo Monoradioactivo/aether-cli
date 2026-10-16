@@ -143,22 +143,101 @@ test("a release PR is recognised by its branch prefix or by the GraphQL spelling
   assert.equal(isReleasePr(pr(1), BASE_CONFIG), false);
 });
 
-test("required check state takes the newest run per name whatever order the API returns", () => {
+test("required check state takes the run per name that finished last whatever order the API returns", () => {
   const newestFirst = [
-    { id: 20, name: "YAML lint", status: "completed", conclusion: "success" },
-    { id: 10, name: "YAML lint", status: "completed", conclusion: "failure" },
+    { id: 20, name: "YAML lint", status: "completed", conclusion: "success", completed_at: "2026-09-21T15:20:00Z" },
+    { id: 10, name: "YAML lint", status: "completed", conclusion: "failure", completed_at: "2026-09-21T15:10:00Z" },
   ];
   assert.equal(requiredCheckState(["YAML lint"], newestFirst, []), "passing");
   const oldestFirst = [...newestFirst].reverse();
   assert.equal(requiredCheckState(["YAML lint"], oldestFirst, []), "passing");
   const failingNewest = [
-    { id: 30, name: "YAML lint", status: "completed", conclusion: "timed_out" },
-    { id: 5, name: "YAML lint", status: "completed", conclusion: "success" },
+    { id: 5, name: "YAML lint", status: "completed", conclusion: "timed_out", completed_at: "2026-09-21T15:30:00Z" },
+    { id: 30, name: "YAML lint", status: "completed", conclusion: "success", completed_at: "2026-09-21T15:05:00Z" },
   ];
   assert.equal(requiredCheckState(["YAML lint"], failingNewest, []), "failing");
-  assert.equal(requiredCheckState(["YAML lint"], [{ id: 1, name: "YAML lint", status: "queued", conclusion: null }], []), "pending");
+  assert.equal(requiredCheckState(["YAML lint"], [{ id: 1, name: "YAML lint", status: "queued", conclusion: null, completed_at: null }], []), "pending");
   assert.equal(requiredCheckState(["Pages"], [], [{ context: "Pages", state: "error" }]), "failing");
   assert.equal(requiredCheckState(["Pages"], [], []), "pending");
+});
+
+const TWIN_CHECKS = ["Lint & Typecheck", "Test", "Docker Build"];
+
+function twinRuns({ cancelledIds, survivorIds, survivorStatus = "completed" }) {
+  const cancelled = [
+    { name: "Lint & Typecheck", completed_at: "2026-09-26T19:32:28Z" },
+    { name: "Test", completed_at: "2026-09-26T19:32:28Z" },
+    { name: "Docker Build", completed_at: "2026-09-26T19:32:28Z" },
+  ].map((run, index) => ({ ...run, id: cancelledIds[index], status: "completed", conclusion: "cancelled" }));
+  const survivors = [
+    { name: "Lint & Typecheck", completed_at: "2026-09-26T19:33:29Z" },
+    { name: "Test", completed_at: "2026-09-26T19:36:25Z" },
+    { name: "Docker Build", completed_at: "2026-09-26T19:33:36Z" },
+  ].map((run, index) =>
+    survivorStatus === "completed"
+      ? { ...run, id: survivorIds[index], status: "completed", conclusion: "success" }
+      : { name: run.name, id: survivorIds[index], status: survivorStatus, conclusion: null, completed_at: null },
+  );
+  return [...cancelled, ...survivors];
+}
+
+const ORDINARY_IDS = { cancelledIds: [108471815573, 108471818302, 108471818806], survivorIds: [108471819296, 108471981966, 108471981975] };
+const INVERTED_IDS = { cancelledIds: ORDINARY_IDS.survivorIds, survivorIds: ORDINARY_IDS.cancelledIds };
+
+test("a cancelled twin that finished before its successful twin reads as passing whichever run holds the higher id", () => {
+  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns(ORDINARY_IDS), []), "passing");
+  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns(INVERTED_IDS), []), "passing");
+  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns(INVERTED_IDS).reverse(), []), "passing");
+});
+
+test("a cancelled set that finished after a successful set reads as failing whichever run holds the higher id", () => {
+  const succeeded = TWIN_CHECKS.map((name, index) => ({
+    id: [108497638901, 108497748469, 108497748501][index],
+    name,
+    status: "completed",
+    conclusion: "success",
+    completed_at: ["2026-09-26T22:14:59Z", "2026-09-26T22:17:16Z", "2026-09-26T22:15:05Z"][index],
+  }));
+  const cancelledLater = TWIN_CHECKS.map((name, index) => ({
+    id: [108498254096, 108498388731, 108498388610][index],
+    name,
+    status: "completed",
+    conclusion: "cancelled",
+    completed_at: "2026-09-26T22:18:59Z",
+  }));
+  assert.equal(requiredCheckState(TWIN_CHECKS, [...succeeded, ...cancelledLater], []), "failing");
+  const cancelledLaterWithLowerIds = cancelledLater.map((run, index) => ({ ...run, id: succeeded[index].id - 1000 }));
+  assert.equal(requiredCheckState(TWIN_CHECKS, [...succeeded, ...cancelledLaterWithLowerIds], []), "failing");
+});
+
+test("a twin still running beside a cancelled one reads as pending whichever run holds the higher id", () => {
+  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns({ ...ORDINARY_IDS, survivorStatus: "in_progress" }), []), "pending");
+  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns({ ...INVERTED_IDS, survivorStatus: "in_progress" }), []), "pending");
+  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns({ ...INVERTED_IDS, survivorStatus: "queued" }), []), "pending");
+});
+
+test("runs that finished in the same second fall back to the higher id", () => {
+  const sameSecond = (failingId, passingId) => [
+    { id: failingId, name: "Test", status: "completed", conclusion: "failure", completed_at: "2026-09-26T19:36:25Z" },
+    { id: passingId, name: "Test", status: "completed", conclusion: "success", completed_at: "2026-09-26T19:36:25Z" },
+  ];
+  assert.equal(requiredCheckState(["Test"], sameSecond(1, 2), []), "passing");
+  assert.equal(requiredCheckState(["Test"], sameSecond(2, 1), []), "failing");
+  assert.equal(requiredCheckState(["Test"], sameSecond(2, 1).reverse(), []), "failing");
+});
+
+test("a completed run without a readable completion time counts as finishing before every timed run", () => {
+  const runs = [
+    { id: 2, name: "Test", status: "completed", conclusion: "failure", completed_at: null },
+    { id: 1, name: "Test", status: "completed", conclusion: "success", completed_at: "2026-09-26T19:36:25Z" },
+  ];
+  assert.equal(requiredCheckState(["Test"], runs, []), "passing");
+  assert.equal(requiredCheckState(["Test"], [...runs].reverse(), []), "passing");
+  const untimed = [
+    { id: 2, name: "Test", status: "completed", conclusion: "failure", completed_at: "not a time" },
+    { id: 1, name: "Test", status: "completed", conclusion: "success" },
+  ];
+  assert.equal(requiredCheckState(["Test"], untimed, []), "failing");
 });
 
 test("a compare touching workflows, or one GitHub truncated, counts as touching", () => {
@@ -262,6 +341,36 @@ test("a failing required check skips to the next candidate", async () => {
   const { result } = await exec(github);
   assert.equal(result.pr, 2);
   assert.deepEqual(github.calls.updates.map((call) => call.number), [2]);
+});
+
+test("a head whose cancelled twin holds the higher id is updated instead of skipped as failing", async () => {
+  const twinned = pr(1);
+  const github = fakeGitHub({
+    prs: [twinned, pr(2)],
+    required: TWIN_CHECKS,
+    checks: { [twinned.headRefOid]: twinRuns(INVERTED_IDS), [pr(2).headRefOid]: twinRuns(ORDINARY_IDS) },
+  });
+  const { result, lines } = await exec(github);
+  assert.equal(result.action, "updated");
+  assert.equal(result.pr, 1);
+  assert.deepEqual(github.calls.updates, [{ number: 1, expected: twinned.headRefOid }]);
+  assert.ok(!lines.some((line) => line.includes("a required check failed")));
+});
+
+test("the queue waits on a bot merge carrying main whose cancelled twin holds the higher id while the survivor runs", async () => {
+  const waiting = pr(2);
+  const github = fakeGitHub({
+    prs: [pr(1), waiting],
+    required: TWIN_CHECKS,
+    commits: { [waiting.headRefOid]: { parents: [OLD_MAIN, MAIN], author: BOT, date: "2026-09-21T15:55:00Z" } },
+    checks: {
+      [pr(1).headRefOid]: twinRuns(ORDINARY_IDS),
+      [waiting.headRefOid]: twinRuns({ ...INVERTED_IDS, survivorStatus: "in_progress" }),
+    },
+  });
+  const { result } = await exec(github);
+  assert.deepEqual(result, { action: "serial-wait", pr: 2, failures: 0 });
+  assert.deepEqual(github.calls.updates, []);
 });
 
 test("an UNKNOWN merge state is polled until GitHub computes it", async () => {
@@ -614,6 +723,213 @@ test("trainReleaseWindow is on from 15:00 until 22:00 on a train day only", () =
   assert.equal(trainHold([release], monday("22:00:00"), WINDOW_CONFIG), true);
 });
 
+const REVENDOR = "chore/openapi-revendor";
+const REVENDOR_CONFIG = { ...BASE_CONFIG, revendorBranch: REVENDOR };
+const REVENDOR_TRAIN_CONFIG = { ...WINDOW_CONFIG, revendorBranch: REVENDOR };
+const ARMED_THIS_MONDAY = "2026-09-21T15:23:39Z";
+const ARMED_LAST_FRIDAY = "2026-09-18T15:23:00Z";
+const TUESDAY = new Date("2026-09-22T16:00:00Z");
+
+function mondayAt(time) {
+  return new Date(`2026-09-21T${time}Z`);
+}
+
+function revendor(number, overrides = {}) {
+  return pr(number, { headRefName: REVENDOR, author: BOT_GRAPHQL, ...overrides });
+}
+
+function updatedNumbers(github) {
+  return github.calls.updates.map((call) => call.number);
+}
+
+test("the bot's re-vendor branch is not a release, and no other branch the bot opens is exempt", () => {
+  for (const author of [BOT, BOT_GRAPHQL, "app/aetherpush-release-bot"]) {
+    assert.equal(isReleasePr(revendor(1, { author }), REVENDOR_CONFIG), false, author);
+  }
+  const otherBranches = [
+    `${REVENDOR}-2`,
+    REVENDOR.slice(0, -1),
+    `x/${REVENDOR}`,
+    REVENDOR.toUpperCase(),
+    "fix/change-1",
+    "release-please--branches--develop--components--aether-server",
+  ];
+  for (const headRefName of otherBranches) {
+    assert.equal(isReleasePr(revendor(1, { headRefName }), REVENDOR_CONFIG), true, headRefName);
+  }
+});
+
+test("a branch under the release prefix is a release whoever opened it, even when it is named as the re-vendor branch", () => {
+  const branch = "release-please--branches--main--components--aether-dashboard";
+  for (const author of [BOT_GRAPHQL, "Monoradioactivo", null]) {
+    const release = pr(1, { headRefName: branch, author });
+    assert.equal(isReleasePr(release, REVENDOR_CONFIG), true, String(author));
+    assert.equal(isReleasePr(release, { ...BASE_CONFIG, revendorBranch: branch }), true, String(author));
+  }
+});
+
+test("with no re-vendor branch configured every pull request the bot opens is a release", () => {
+  for (const revendorBranch of [undefined, null]) {
+    assert.equal(isReleasePr(revendor(1), { ...BASE_CONFIG, revendorBranch }), true, String(revendorBranch));
+  }
+});
+
+test("configuration reads the re-vendor branch from the environment, and none when it is unset or empty", () => {
+  assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO }).revendorBranch, null);
+  assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO, REVENDOR_BRANCH: "" }).revendorBranch, null);
+  assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO, REVENDOR_BRANCH: REVENDOR }).revendorBranch, REVENDOR);
+});
+
+test("a re-vendor pull request armed on an earlier UTC day is updated where a release would be skipped", async () => {
+  const stale = revendor(30, { armedAt: ARMED_LAST_FRIDAY });
+
+  const exempt = fakeGitHub({ prs: [stale] });
+  const ordinary = await exec(exempt, { config: REVENDOR_TRAIN_CONFIG, now: TUESDAY });
+  assert.equal(ordinary.result.action, "updated");
+  assert.deepEqual(exempt.calls.updates, [{ number: 30, expected: stale.headRefOid }]);
+  assert.equal(ordinary.lines.some((line) => line.includes("earlier UTC day")), false);
+
+  const unnamed = fakeGitHub({ prs: [stale] });
+  const asRelease = await exec(unnamed, { config: WINDOW_CONFIG, now: TUESDAY });
+  assert.deepEqual(asRelease.result, { action: "none", failures: 0 });
+  assert.deepEqual(unnamed.calls.updates, []);
+  assert.ok(asRelease.lines.includes("Skip #30: release arm from an earlier UTC day."));
+});
+
+test("a re-vendor pull request armed on a train day holds no update past the cutoff", async () => {
+  const armedToday = revendor(30, { armedAt: ARMED_THIS_MONDAY });
+  const pastCutoff = mondayAt("21:50:00");
+  assert.equal(trainHold([armedToday], pastCutoff, REVENDOR_TRAIN_CONFIG), false);
+  assert.equal(trainHold([armedToday], pastCutoff, WINDOW_CONFIG), true);
+
+  const exempt = fakeGitHub({ prs: [armedToday] });
+  const ordinary = await exec(exempt, { config: REVENDOR_TRAIN_CONFIG, now: pastCutoff });
+  assert.equal(ordinary.result.action, "updated");
+  assert.deepEqual(updatedNumbers(exempt), [30]);
+
+  const unnamed = fakeGitHub({ prs: [armedToday] });
+  const asRelease = await exec(unnamed, { config: WINDOW_CONFIG, now: pastCutoff });
+  assert.deepEqual(asRelease.result, { action: "train-hold", failures: 0 });
+  assert.deepEqual(unnamed.calls.updates, []);
+});
+
+test("a re-vendor pull request armed on a train day does not open the release-only window", async () => {
+  const armedToday = revendor(30, { armedAt: ARMED_THIS_MONDAY });
+  const inWindow = mondayAt("16:00:00");
+  assert.equal(trainReleaseWindow([armedToday], inWindow, REVENDOR_TRAIN_CONFIG), false);
+  assert.equal(trainReleaseWindow([armedToday], inWindow, WINDOW_CONFIG), true);
+
+  const exempt = fakeGitHub({ prs: [pr(7), armedToday] });
+  const ordinary = await exec(exempt, { config: REVENDOR_TRAIN_CONFIG, now: inWindow });
+  assert.deepEqual(updatedNumbers(exempt), [7]);
+  assert.equal(ordinary.lines.some((line) => line.startsWith("Train window:")), false);
+
+  const unnamed = fakeGitHub({ prs: [pr(7), armedToday] });
+  const asRelease = await exec(unnamed, { config: WINDOW_CONFIG, now: inWindow });
+  assert.deepEqual(updatedNumbers(unnamed), [30]);
+  assert.ok(asRelease.lines.some((line) => line.startsWith("Train window:")));
+});
+
+test("inside a genuine release window the re-vendor pull request waits with the feature pull requests", async () => {
+  const { feature, release } = releaseAndFeature();
+  const waiting = revendor(5, { armedAt: ARMED_THIS_MONDAY });
+  const inWindow = mondayAt("16:00:00");
+
+  const releaseBehind = fakeGitHub({ prs: [waiting, feature, release] });
+  const first = await exec(releaseBehind, { config: REVENDOR_TRAIN_CONFIG, now: inWindow });
+  assert.deepEqual(updatedNumbers(releaseBehind), [20]);
+  assert.ok(first.lines.some((line) => line.startsWith("Train window:")));
+
+  const releaseClean = fakeGitHub({ prs: [waiting, feature, { ...release, mergeStateStatus: "CLEAN" }] });
+  const idle = await exec(releaseClean, { config: REVENDOR_TRAIN_CONFIG, now: inWindow });
+  assert.deepEqual(idle.result, { action: "none", failures: 0 });
+  assert.deepEqual(releaseClean.calls.updates, []);
+
+  const unnamed = fakeGitHub({ prs: [waiting, feature, { ...release, mergeStateStatus: "CLEAN" }] });
+  await exec(unnamed, { config: WINDOW_CONFIG, now: inWindow });
+  assert.deepEqual(updatedNumbers(unnamed), [5]);
+});
+
+test("any other branch the bot opens is held to the release rules where they act", async () => {
+  const other = revendor(40, { headRefName: `${REVENDOR}-2`, armedAt: ARMED_THIS_MONDAY });
+
+  const cutoff = fakeGitHub({ prs: [pr(7), other] });
+  const held = await exec(cutoff, { config: REVENDOR_TRAIN_CONFIG, now: mondayAt("21:46:00") });
+  assert.deepEqual(held.result, { action: "train-hold", failures: 0 });
+  assert.deepEqual(cutoff.calls.updates, []);
+
+  const window = fakeGitHub({ prs: [pr(7), other] });
+  const inWindow = await exec(window, { config: REVENDOR_TRAIN_CONFIG, now: mondayAt("16:00:00") });
+  assert.deepEqual(updatedNumbers(window), [40]);
+  assert.ok(inWindow.lines.some((line) => line.startsWith("Train window:")));
+
+  const earlierArm = fakeGitHub({ prs: [{ ...other, armedAt: ARMED_LAST_FRIDAY }] });
+  const skipped = await exec(earlierArm, { config: REVENDOR_TRAIN_CONFIG, now: TUESDAY });
+  assert.deepEqual(skipped.result, { action: "none", failures: 0 });
+  assert.deepEqual(earlierArm.calls.updates, []);
+  assert.ok(skipped.lines.includes("Skip #40: release arm from an earlier UTC day."));
+});
+
+test("the ordinary skips and merge states decide the re-vendor pull request, with or without a train", async () => {
+  const failed = [{ id: 1, name: "YAML lint", status: "completed", conclusion: "failure" }];
+  const cases = [
+    { name: "armed and behind", overrides: {}, updated: 30 },
+    { name: "draft", overrides: { isDraft: true }, updated: 31, line: "Skip #30: draft." },
+    { name: "fork", overrides: { headRepository: "someone/fork" }, updated: 31, line: "Skip #30: head outside this repository." },
+    { name: "unresolved thread", overrides: { unresolvedThreads: 1 }, updated: 31, line: "Skip #30: unresolved review threads." },
+    { name: "Renovate", overrides: { author: "renovate[bot]" }, updated: 31, line: "Skip #30: Renovate maintains its own branches." },
+    {
+      name: "blocked with passing checks",
+      overrides: { mergeStateStatus: "BLOCKED" },
+      updated: 31,
+      line: "Could not update #30: required checks pass but GitHub still reports the pull request as BLOCKED (for example a code-scanning alert), which updating the branch cannot clear.",
+    },
+    { name: "failing required check", overrides: {}, checks: failed, updated: 31, line: "Skip #30: a required check failed on its head." },
+    { name: "not armed", overrides: { armedAt: null }, updated: 31 },
+    { name: "up to date", overrides: { mergeStateStatus: "CLEAN" }, updated: 31, line: "#30: merge state CLEAN." },
+  ];
+  for (const [label, config] of [["no train", REVENDOR_CONFIG], ["train", REVENDOR_TRAIN_CONFIG]]) {
+    for (const item of cases) {
+      const subject = revendor(30, { armedAt: ARMED_LAST_FRIDAY, ...item.overrides });
+      const github = fakeGitHub({
+        prs: [subject, pr(31)],
+        checks: item.checks ? { [subject.headRefOid]: item.checks } : {},
+      });
+      const { lines } = await exec(github, { config, now: TUESDAY });
+      assert.deepEqual(updatedNumbers(github), [item.updated], `${label}: ${item.name}`);
+      if (item.line) assert.ok(lines.includes(item.line), `${label}: ${item.name}`);
+      assert.equal(lines.some((line) => line.includes("earlier UTC day")), false, `${label}: ${item.name}`);
+    }
+  }
+});
+
+test("a genuine release keeps every train rule when a re-vendor branch is configured", async () => {
+  const { feature, release } = releaseAndFeature();
+  const stale = { ...release, armedAt: ARMED_LAST_FRIDAY };
+  for (const [label, config] of [["unnamed", WINDOW_CONFIG], ["named", REVENDOR_TRAIN_CONFIG]]) {
+    assert.equal(isReleasePr(release, config), true, label);
+    assert.equal(trainHold([release], mondayAt("21:45:00"), config), true, label);
+    assert.equal(trainHold([release], mondayAt("21:44:59"), config), false, label);
+    assert.equal(trainReleaseWindow([release], mondayAt("15:00:00"), config), true, label);
+    assert.equal(trainReleaseWindow([release], mondayAt("22:00:00"), config), false, label);
+
+    const earlierArm = fakeGitHub({ prs: [stale] });
+    const skipped = await exec(earlierArm, { config, now: TUESDAY });
+    assert.deepEqual(skipped.result, { action: "none", failures: 0 }, label);
+    assert.deepEqual(earlierArm.calls.updates, [], label);
+    assert.ok(skipped.lines.includes("Skip #20: release arm from an earlier UTC day."), label);
+
+    const window = fakeGitHub({ prs: [feature, release] });
+    await exec(window, { config, now: mondayAt("16:00:00") });
+    assert.deepEqual(updatedNumbers(window), [20], label);
+
+    const cutoff = fakeGitHub({ prs: [feature, release] });
+    const held = await exec(cutoff, { config, now: mondayAt("21:46:00") });
+    assert.deepEqual(held.result, { action: "train-hold", failures: 0 }, label);
+    assert.deepEqual(cutoff.calls.updates, [], label);
+  }
+});
+
 test("configuration reads the train only when a cutoff is set", () => {
   assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO }).train, null);
   assert.deepEqual(
@@ -663,6 +979,27 @@ test("the GitHub adapter keeps PR data out of argv and uses the App token only f
   assert.equal(seen[2].token, "read");
   assert.equal(seen[3].token, "read");
   assert.match(seen[3].args[1], /per_page=100&page=1$/);
+});
+
+test("the GitHub adapter reads each check run's completion time", () => {
+  const seen = [];
+  const gh = (args, token) => {
+    seen.push({ args, token });
+    return "[]";
+  };
+  const github = createGitHub({ gh, repository: REPO, readToken: "read", updateToken: "app" });
+  github.checkRuns("a".repeat(40));
+  assert.deepEqual(seen, [
+    {
+      args: [
+        "api",
+        `repos/${REPO}/commits/${"a".repeat(40)}/check-runs?per_page=100`,
+        "--jq",
+        "[.check_runs[] | {id, name, status, conclusion, completed_at}]",
+      ],
+      token: "read",
+    },
+  ]);
 });
 
 test("the workflow keeps event data out of run and mints exactly contents and pull-requests write", () => {
