@@ -1,16 +1,19 @@
-import {
-  DEFAULT_LABEL_ACTOR_ALLOWLIST,
-  DEFAULT_RELEASE_BOT_LOGIN,
-  DEFAULT_VERIFIED_LABEL,
-} from "./release-auto-merge-gate.mjs";
-
 export const DEFAULT_TRUSTED_SIGNERS = ["Monoradioactivo"];
+export const DEFAULT_VERIFIED_LABEL = "brief-verified";
+export const DEFAULT_LABEL_ACTOR_ALLOWLIST = ["Monoradioactivo"];
+export const DEFAULT_RELEASE_BOT_LOGIN = "aetherpush-release-bot[bot]";
 export const PROTECTED_BRANCH = "main";
 export const WEB_FLOW_LOGIN = "web-flow";
 export const RELEASE_BRANCH_PREFIX = "release-please--branches--main";
+export const RELEASE_CONFIG = "release-please-config.json";
+export const REVENDOR_BRANCH = "chore/openapi-revendor";
+export const REVENDOR_PATH = "openapi/openapi.yaml";
+export const REVENDOR_SOURCE_URL = "https://api-staging.aetherpush.com/openapi.yaml";
 export const VERSION_MARKER = "x-release-please-version";
 export const VOUCH_RUN_NAME = "Commit provenance";
 export const VOUCH_WORKFLOW_PATH = ".github/workflows/commit-provenance.yml";
+export const VERSION_BLOCK_START = "x-release-please-start-version";
+export const VERSION_BLOCK_END = "x-release-please-end";
 export const MAX_COMPARE_COMMITS = 250;
 
 const SSH_SIGNATURE = "-----BEGIN SSH SIGNATURE-----";
@@ -189,6 +192,10 @@ export function isReleasePullRequest(pullRequest, releaseBotLogin = DEFAULT_RELE
   return pullRequest?.author === releaseBotLogin && String(pullRequest?.headRef ?? "").startsWith(RELEASE_BRANCH_PREFIX);
 }
 
+export function isRevendorPullRequest(pullRequest, releaseBotLogin = DEFAULT_RELEASE_BOT_LOGIN) {
+  return pullRequest?.author === releaseBotLogin && pullRequest?.headRef === REVENDOR_BRANCH;
+}
+
 function parseVersion(version) {
   const match = SEMVER.exec(String(version ?? ""));
   return match ? match.slice(1).map(Number) : null;
@@ -271,15 +278,32 @@ function manifestReason(base, head, newVersion) {
   return null;
 }
 
+export function versionMarkedLines(lines) {
+  const marked = new Set();
+  let inBlock = false;
+  lines.forEach((line, index) => {
+    if (line.includes(VERSION_BLOCK_START)) {
+      inBlock = true;
+    } else if (line.includes(VERSION_BLOCK_END)) {
+      inBlock = false;
+    } else if (inBlock || line.includes(VERSION_MARKER)) {
+      marked.add(index);
+    }
+  });
+  return { marked, unterminated: inBlock };
+}
+
 function versionLinesReason(path, base, head, newVersion) {
   if (base === null || head === null) return `${path} is added or removed`;
   const baseLines = base.split("\n");
   const headLines = head.split("\n");
   if (baseLines.length !== headLines.length) return `${path} changes its line count`;
+  const { marked, unterminated } = versionMarkedLines(baseLines);
+  if (unterminated) return `${path} opens a ${VERSION_BLOCK_START} block that no ${VERSION_BLOCK_END} closes`;
   for (let i = 0; i < headLines.length; i++) {
     if (headLines[i] === baseLines[i]) continue;
-    if (!headLines[i].includes(VERSION_MARKER)) {
-      return `${path}:${i + 1} changes a line that carries no ${VERSION_MARKER} marker`;
+    if (!marked.has(i)) {
+      return `${path}:${i + 1} changes a line that carries no ${VERSION_MARKER} marker and sits in no ${VERSION_BLOCK_START} block`;
     }
     if (headLines[i].replace(SEMVER_TOKEN, "#") !== baseLines[i].replace(SEMVER_TOKEN, "#")) {
       return `${path}:${i + 1} changes more than the version`;
@@ -309,12 +333,26 @@ function changeReason(change, { read, extraFiles, newVersion }) {
   return `${path} is outside the release footprint`;
 }
 
+function releaseVersions(read) {
+  if (read("package.json", "base") !== null) {
+    return {
+      source: "package.json",
+      oldVersion: parseJson(read("package.json", "base"))?.version,
+      newVersion: parseJson(read("package.json", "head"))?.version,
+    };
+  }
+  return {
+    source: RELEASE_MANIFEST,
+    oldVersion: parseJson(read(RELEASE_MANIFEST, "base"))?.["."],
+    newVersion: parseJson(read(RELEASE_MANIFEST, "head"))?.["."],
+  };
+}
+
 export function releaseFootprintReasons({ changes, read, extraFiles = [] }) {
-  const oldVersion = parseJson(read("package.json", "base"))?.version;
-  const newVersion = parseJson(read("package.json", "head"))?.version;
+  const { source, oldVersion, newVersion } = releaseVersions(read);
   const reasons = [];
   if (!isNextVersion(oldVersion, newVersion)) {
-    reasons.push(`package.json moves the version from ${oldVersion} to ${newVersion}, which is not the next patch, minor or major`);
+    reasons.push(`${source} moves the version from ${oldVersion} to ${newVersion}, which is not the next patch, minor or major`);
   }
   for (const change of changes) {
     const reason = changeReason(change, { read, extraFiles, newVersion });
@@ -323,8 +361,43 @@ export function releaseFootprintReasons({ changes, read, extraFiles = [] }) {
   return reasons;
 }
 
+export function revendorFootprintReasons(changes) {
+  const reasons = changes
+    .filter((change) => !(change.path === REVENDOR_PATH && change.status === "M"))
+    .map((change) => `${change.path} is outside the re-vendor footprint, which is a modified ${REVENDOR_PATH} alone`);
+  if (!changes.some((change) => change.path === REVENDOR_PATH && change.status === "M")) {
+    reasons.push(`the re-vendor pull request does not modify ${REVENDOR_PATH}`);
+  }
+  return reasons;
+}
+
+export function compareRevendorSource({ head, source, error, baseBlob, mainBlob }) {
+  if (typeof baseBlob !== "string" || baseBlob !== mainBlob) {
+    return `${REVENDOR_PATH} on main (${short(mainBlob) || "absent"}) differs from the pull request's base (${short(baseBlob) || "absent"}), so a squash would land a merge the check did not compare`;
+  }
+  if (error) return `could not read ${REVENDOR_SOURCE_URL}: ${error}`;
+  if (!Buffer.isBuffer(head)) return `${REVENDOR_PATH} is missing at the head`;
+  if (!Buffer.isBuffer(source) || !source.equals(head)) {
+    return `${REVENDOR_PATH} at the head (${head.length} bytes) differs from ${REVENDOR_SOURCE_URL} (${Buffer.isBuffer(source) ? source.length : 0} bytes)`;
+  }
+  return null;
+}
+
 function refused(reason) {
   return { ok: false, via: null, reasons: [reason], commits: [] };
+}
+
+function footprintVerdict(classified, footprint, via) {
+  const untrusted = classified.filter((entry) => !entry.ok && !entry.webFlow);
+  if (untrusted.length === 0 && footprint.length === 0) {
+    return { ok: true, via, reasons: [], commits: classified };
+  }
+  return {
+    ok: false,
+    via: null,
+    reasons: [...untrusted.map((entry) => entry.reason), ...footprint],
+    commits: classified,
+  };
 }
 
 export function judgePullRequest({
@@ -339,6 +412,8 @@ export function judgePullRequest({
   gitCommitShas,
   changes,
   read,
+  releaseConfigured = false,
+  revendorSourceReason = `the vendored spec was not compared with ${REVENDOR_SOURCE_URL}`,
   extraFiles = [],
   signers = DEFAULT_TRUSTED_SIGNERS,
   label = DEFAULT_VERIFIED_LABEL,
@@ -371,7 +446,6 @@ export function judgePullRequest({
   if (!labelsMayBeStale && isLabelVouch(event, label, labelActors)) {
     return { ok: true, via: `${label} label applied by ${event.sender}`, reasons: [], commits: classified };
   }
-
   const pullNumber = pullRequest?.number;
   const headSha = pullRequest?.headSha;
   const standing =
@@ -389,17 +463,24 @@ export function judgePullRequest({
   }
 
   if (isReleasePullRequest(pullRequest, releaseBotLogin)) {
-    const untrusted = classified.filter((entry) => !entry.ok && !entry.webFlow);
-    const footprint = releaseFootprintReasons({ changes, read, extraFiles });
-    if (untrusted.length === 0 && footprint.length === 0) {
-      return { ok: true, via: "release pull request inside the release-please footprint", reasons: [], commits: classified };
+    if (!releaseConfigured) {
+      return {
+        ok: false,
+        via: null,
+        reasons: [`${PROTECTED_BRANCH} carries no ${RELEASE_CONFIG}, so this repository has no release pull request to recognise`],
+        commits: classified,
+      };
     }
-    return {
-      ok: false,
-      via: null,
-      reasons: [...untrusted.map((entry) => entry.reason), ...footprint],
-      commits: classified,
-    };
+    return footprintVerdict(
+      classified,
+      releaseFootprintReasons({ changes, read, extraFiles }),
+      "release pull request inside the release-please footprint",
+    );
+  }
+  if (isRevendorPullRequest(pullRequest, releaseBotLogin)) {
+    const footprint = revendorFootprintReasons(changes);
+    if (revendorSourceReason) footprint.push(revendorSourceReason);
+    return footprintVerdict(classified, footprint, `re-vendor pull request whose ${REVENDOR_PATH} matches ${REVENDOR_SOURCE_URL}`);
   }
   const reasons = classified.filter((entry) => !entry.ok).map((entry) => entry.reason);
   if (standing) reasons.push(standing.reason);
