@@ -4,15 +4,19 @@ import { readFileSync } from "node:fs";
 
 import {
   classifyCommit,
+  compareRevendorSource,
   extraFilesFrom,
   isLabelVouch,
   isNextVersion,
   isReleasePullRequest,
+  isRevendorPullRequest,
   isTrustedSignerCommit,
   judgePullRequest,
   MAX_COMPARE_COMMITS,
   parseNameStatus,
   releaseFootprintReasons,
+  revendorFootprintReasons,
+  versionMarkedLines,
   vouchRunTitle,
 } from "./commit-provenance.mjs";
 
@@ -41,6 +45,7 @@ const hooks = {
 
 const adrianPull = { author: "Monoradioactivo", headRef: "chore/something" };
 const releasePull = { author: "aetherpush-release-bot[bot]", headRef: "release-please--branches--main--components--aether-server" };
+const revendorPull = { author: "aetherpush-release-bot[bot]", headRef: "chore/openapi-revendor" };
 const pushEvent = { action: "synchronize", label: "", sender: "Monoradioactivo" };
 
 function judge(overrides) {
@@ -53,6 +58,7 @@ function judge(overrides) {
     gitCommitShas: commits.map((commit) => commit.sha),
     changes: [],
     read: () => null,
+    releaseConfigured: true,
     ...hooks,
     ...overrides,
   });
@@ -366,6 +372,212 @@ test("extra files come from the root package or the top level of release-please-
   assert.deepEqual(extraFilesFrom(null), []);
 });
 
+test("a release pull request in a repository whose main carries no release-please config fails", () => {
+  const verdict = judge({
+    pullRequest: releasePull,
+    commits: [webFlow("rel1")],
+    changes: releaseChanges,
+    read: releaseFiles(),
+    extraFiles,
+    releaseConfigured: false,
+  });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /main carries no release-please-config.json/);
+  const defaulted = judgePullRequest({
+    baseRef: "main",
+    pullRequest: releasePull,
+    event: pushEvent,
+    commits: [webFlow("rel1")],
+    totalCommits: 1,
+    gitCommitShas: ["rel1"],
+    changes: releaseChanges,
+    read: releaseFiles(),
+    extraFiles,
+    ...hooks,
+  });
+  assert.equal(defaulted.ok, false);
+});
+
+const readme = [
+  "# Aether deploy action",
+  "```yaml",
+  "      # x-release-please-start-version",
+  "      - uses: Monoradioactivo/aetherpush-deploy-action@v0.6.4",
+  "      # x-release-please-end",
+  "```",
+  "Pin a tag such as v0.6.4 in your workflow.",
+  "",
+].join("\n");
+const simpleManifestBase = JSON.stringify({ ".": "0.6.4" }, null, 2);
+const simpleManifestHead = JSON.stringify({ ".": "0.6.5" }, null, 2);
+
+function simpleReleaseFiles(overrides = {}) {
+  const files = {
+    base: { ".release-please-manifest.json": simpleManifestBase, "README.md": readme },
+    head: { ".release-please-manifest.json": simpleManifestHead, "README.md": readme.replace("@v0.6.4", "@v0.6.5") },
+  };
+  for (const [side, entries] of Object.entries(overrides)) Object.assign(files[side], entries);
+  return (path, side) => files[side][path] ?? null;
+}
+
+const simpleReleaseChanges = [
+  { path: "CHANGELOG.md", status: "M", deletions: 0 },
+  { path: ".release-please-manifest.json", status: "M", deletions: 1 },
+  { path: "README.md", status: "M", deletions: 1 },
+];
+
+test("a release pull request in a repository without package.json takes its version from the manifest", () => {
+  assert.deepEqual(releaseFootprintReasons({ changes: simpleReleaseChanges, read: simpleReleaseFiles(), extraFiles: ["README.md"] }), []);
+  const verdict = judge({
+    pullRequest: { ...releasePull, headRef: "release-please--branches--main--components--aetherpush-deploy-action" },
+    commits: [webFlow("rel1")],
+    changes: simpleReleaseChanges,
+    read: simpleReleaseFiles(),
+    extraFiles: ["README.md"],
+  });
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.via, "release pull request inside the release-please footprint");
+});
+
+test("a manifest version jump beyond the next step fails a release without package.json", () => {
+  const read = simpleReleaseFiles({
+    head: { ".release-please-manifest.json": JSON.stringify({ ".": "0.9.0" }), "README.md": readme.replace("@v0.6.4", "@v0.9.0") },
+  });
+  assert.match(
+    releaseFootprintReasons({ changes: simpleReleaseChanges, read, extraFiles: ["README.md"] }).join("\n"),
+    /\.release-please-manifest\.json moves the version from 0\.6\.4 to 0\.9\.0/,
+  );
+});
+
+test("a release without package.json that adds one fails the footprint", () => {
+  const changes = [...simpleReleaseChanges, { path: "package.json", status: "A", deletions: 0 }];
+  assert.match(
+    releaseFootprintReasons({ changes, read: simpleReleaseFiles(), extraFiles: ["README.md"] }).join("\n"),
+    /package.json is added, removed or renamed/,
+  );
+});
+
+test("lines inside a version block and lines carrying the inline marker are the only version lines", () => {
+  const lines = ["a 1.0.0", "# x-release-please-start-version", "b 1.0.0", "c 1.0.0", "# x-release-please-end", "d 1.0.0", "e 1.0.0 # x-release-please-version"];
+  const { marked, unterminated } = versionMarkedLines(lines);
+  assert.deepEqual([...marked], [2, 3, 6]);
+  assert.equal(unterminated, false);
+});
+
+test("a version block that never closes fails the footprint", () => {
+  const open = readme.replace("      # x-release-please-end\n", "      # closed elsewhere\n");
+  const read = simpleReleaseFiles({ base: { "README.md": open }, head: { "README.md": open.replace("@v0.6.4", "@v0.6.5") } });
+  assert.equal(versionMarkedLines(open.split("\n")).unterminated, true);
+  assert.match(
+    releaseFootprintReasons({ changes: simpleReleaseChanges, read, extraFiles: ["README.md"] }).join("\n"),
+    /README.md opens a x-release-please-start-version block that no x-release-please-end closes/,
+  );
+});
+
+test("a README line inside a version block may change only its version", () => {
+  const extra = ["README.md"];
+  const retargeted = simpleReleaseFiles({ head: { "README.md": readme.replace("Monoradioactivo/aetherpush-deploy-action@v0.6.4", "attacker/aetherpush-deploy-action@v0.6.5") } });
+  assert.match(
+    releaseFootprintReasons({ changes: simpleReleaseChanges, read: retargeted, extraFiles: extra }).join("\n"),
+    /README.md:4 changes more than the version/,
+  );
+  const outside = simpleReleaseFiles({ head: { "README.md": readme.replace("@v0.6.4", "@v0.6.5").replace("such as v0.6.4", "such as v0.6.5") } });
+  assert.match(
+    releaseFootprintReasons({ changes: simpleReleaseChanges, read: outside, extraFiles: extra }).join("\n"),
+    /README.md:7 changes a line that carries no x-release-please-version marker and sits in no x-release-please-start-version block/,
+  );
+  const unfenced = simpleReleaseFiles({ head: { "README.md": readme.replace("@v0.6.4", "@v0.6.5").replace("      # x-release-please-end", "      # x-release-please-end 0.6.5") } });
+  assert.match(
+    releaseFootprintReasons({ changes: simpleReleaseChanges, read: unfenced, extraFiles: extra }).join("\n"),
+    /README.md:5 changes a line that carries no x-release-please-version marker/,
+  );
+});
+
+test("only the release bot's chore/openapi-revendor branch is a re-vendor pull request", () => {
+  assert.equal(isRevendorPullRequest(revendorPull), true);
+  assert.equal(isRevendorPullRequest({ ...revendorPull, author: "Monoradioactivo" }), false);
+  assert.equal(isRevendorPullRequest({ ...revendorPull, headRef: "chore/openapi-revendor-2" }), false);
+  assert.equal(isRevendorPullRequest({ ...revendorPull, headRef: "chore/openapi" }), false);
+});
+
+const revendorChanges = [{ path: "openapi/openapi.yaml", status: "M", deletions: 8 }];
+const unchangedBase = { baseBlob: "0123456789ab", mainBlob: "0123456789ab" };
+
+test("a re-vendor pull request that modifies the vendored spec alone, byte for byte the staging spec, passes", () => {
+  const verdict = judge({ pullRequest: revendorPull, commits: [webFlow("rv1")], changes: revendorChanges, revendorSourceReason: null });
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.via, "re-vendor pull request whose openapi/openapi.yaml matches https://api-staging.aetherpush.com/openapi.yaml");
+});
+
+test("a re-vendor pull request fails when its spec was not compared with staging or differs from it", () => {
+  const uncompared = judge({ pullRequest: revendorPull, commits: [webFlow("rv1")], changes: revendorChanges });
+  assert.equal(uncompared.ok, false);
+  assert.match(uncompared.reasons.join("\n"), /the vendored spec was not compared with https:\/\/api-staging.aetherpush.com\/openapi.yaml/);
+  const differs = judge({
+    pullRequest: revendorPull,
+    commits: [webFlow("rv1")],
+    changes: revendorChanges,
+    revendorSourceReason: compareRevendorSource({ ...unchangedBase, head: Buffer.from("openapi: 3.1.0\nx: attacker\n"), source: Buffer.from("openapi: 3.1.0\n") }),
+  });
+  assert.equal(differs.ok, false);
+  assert.match(differs.reasons.join("\n"), /openapi\/openapi.yaml at the head \(27 bytes\) differs from https:\/\/api-staging.aetherpush.com\/openapi.yaml \(15 bytes\)/);
+});
+
+test("the staging comparison is byte for byte and fails closed on a fetch error or a missing spec", () => {
+  const spec = Buffer.from("openapi: 3.1.0\n");
+  assert.equal(compareRevendorSource({ ...unchangedBase, head: spec, source: Buffer.from("openapi: 3.1.0\n") }), null);
+  assert.match(compareRevendorSource({ ...unchangedBase, head: spec, source: Buffer.from("openapi: 3.1.0\r\n") }), /differs from https/);
+  assert.match(compareRevendorSource({ ...unchangedBase, head: Buffer.from([0xef, 0xbb, 0xbf, ...spec]), source: spec }), /differs from https/);
+  assert.match(compareRevendorSource({ ...unchangedBase, head: spec, error: "HTTP 503" }), /could not read https:\/\/api-staging.aetherpush.com\/openapi.yaml: HTTP 503/);
+  assert.match(compareRevendorSource({ ...unchangedBase, head: null, source: spec }), /openapi\/openapi.yaml is missing at the head/);
+  assert.match(compareRevendorSource({ ...unchangedBase, head: spec }), /differs from https/);
+});
+
+test("the staging comparison fails when main changed the spec after the pull request's base", () => {
+  const spec = Buffer.from("openapi: 3.1.0\n");
+  const moved = compareRevendorSource({ baseBlob: "0123456789ab", mainBlob: "fedcba987654", head: spec, source: spec });
+  assert.match(moved, /openapi\/openapi.yaml on main \(fedcba9\) differs from the pull request's base \(0123456\), so a squash would land a merge the check did not compare/);
+  assert.match(compareRevendorSource({ baseBlob: null, mainBlob: "fedcba987654", head: spec, source: spec }), /differs from the pull request's base \(absent\)/);
+  assert.match(compareRevendorSource({ head: spec, source: spec }), /on main \(absent\) differs from the pull request's base \(absent\)/);
+});
+
+test("a re-vendor pull request that changes any other file fails", () => {
+  const verdict = judge({
+    pullRequest: revendorPull,
+    revendorSourceReason: null,
+    commits: [webFlow("rv1")],
+    changes: [...revendorChanges, { path: "scripts/check-openapi-sync.mjs", status: "M", deletions: 1 }],
+  });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /scripts\/check-openapi-sync.mjs is outside the re-vendor footprint/);
+});
+
+test("a re-vendor pull request that adds, deletes or leaves out the spec fails", () => {
+  assert.match(revendorFootprintReasons([{ path: "openapi/openapi.yaml", status: "A", deletions: 0 }]).join("\n"), /openapi\/openapi.yaml is outside the re-vendor footprint/);
+  assert.match(revendorFootprintReasons([{ path: "openapi/openapi.yaml", status: "D", deletions: 90 }]).join("\n"), /does not modify openapi\/openapi.yaml/);
+  assert.match(revendorFootprintReasons([]).join("\n"), /does not modify openapi\/openapi.yaml/);
+});
+
+test("the re-vendor diff on another author's or another branch's pull request is judged commit by commit", () => {
+  const otherAuthor = judge({ pullRequest: { ...revendorPull, author: "someone-else" }, commits: [webFlow("rv1")], changes: revendorChanges, revendorSourceReason: null });
+  assert.equal(otherAuthor.ok, false);
+  assert.deepEqual(otherAuthor.reasons, ["commit rv1 is not signed by a trusted key"]);
+  const otherBranch = judge({ pullRequest: { ...revendorPull, headRef: "chore/openapi-revendor-x" }, commits: [webFlow("rv1")], changes: revendorChanges, revendorSourceReason: null });
+  assert.equal(otherBranch.ok, false);
+  assert.deepEqual(otherBranch.reasons, ["commit rv1 is not signed by a trusted key"]);
+});
+
+test("a re-vendor pull request carrying a commit signed by an unknown key fails", () => {
+  const verdict = judge({
+    pullRequest: revendorPull,
+    commits: [webFlow("rv1"), signed("unknown", { login: "someone-else" })],
+    changes: revendorChanges,
+    revendorSourceReason: null,
+  });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /unknown is not signed by a trusted key/);
+});
+
 const vouchPull = { ...adrianPull, number: 42, headSha: "h2" };
 const VOUCH_RUN_ID = 9001;
 const ownRun = { id: VOUCH_RUN_ID, runNumber: 20, title: "Commit provenance #42 synchronize", actor: "Monoradioactivo", headSha: "h2" };
@@ -564,7 +776,12 @@ test("a vouch with no pull request number or head to bind to refuses", () => {
     commits: [webFlow("r1")],
     pullRequest: { ...vouchPull, number: undefined },
     labels: ["brief-verified"],
-    resolveVouch: () => ({ runId: VOUCH_RUN_ID, labelEvents: [labelEvent(10, "labeled")], runs: [ownRun, vouchRun(7, "labeled")] }),
+    resolveVouch: () => ({
+      runId: VOUCH_RUN_ID,
+      labels: ["brief-verified"],
+      labelEvents: [labelEvent(10, "labeled")],
+      runs: [ownRun, vouchRun(7, "labeled")],
+    }),
   });
   assert.equal(noNumber.ok, false);
   assert.match(noNumber.reasons.join("\n"), /needs the pull request number and the head/);

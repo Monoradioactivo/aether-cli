@@ -2,10 +2,15 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 import {
+  compareRevendorSource,
   extraFilesFrom,
+  isRevendorPullRequest,
   judgePullRequest,
   parseNameStatus,
   PROTECTED_BRANCH,
+  RELEASE_CONFIG,
+  REVENDOR_PATH,
+  REVENDOR_SOURCE_URL,
   VOUCH_RUN_NAME,
   VOUCH_WORKFLOW_PATH,
 } from "./commit-provenance.mjs";
@@ -15,6 +20,9 @@ const MAIN_REF = `refs/remotes/origin/${PROTECTED_BRANCH}`;
 const WORKFLOW_FILE = "commit-provenance.yml";
 const RUN_PAGE_SIZE = 100;
 const RUN_INDEX_RETRY_MS = 5_000;
+const REVENDOR_SOURCE_TIMEOUT_MS = 30_000;
+const REVENDOR_SOURCE_ATTEMPTS = 3;
+const REVENDOR_SOURCE_BACKOFF_MS = 5_000;
 
 function git(args, env = process.env) {
   return execFileSync("git", args, { encoding: "utf8", maxBuffer: 50 * 1024 * 1024, env });
@@ -99,6 +107,15 @@ function resolveVouch({ pullNumber, headSha, headRef, mainSha, runId }) {
   }
 }
 
+function parseLabels(text) {
+  try {
+    const parsed = JSON.parse(text ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((name) => typeof name === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 function authenticatedGitEnv() {
   const token = process.env.GH_TOKEN;
   if (!token) return process.env;
@@ -113,9 +130,9 @@ function authenticatedGitEnv() {
 }
 
 function readExtraFiles() {
-  if (!existsSync("release-please-config.json")) return [];
+  if (!existsSync(RELEASE_CONFIG)) return [];
   try {
-    return extraFilesFrom(JSON.parse(readFileSync("release-please-config.json", "utf8")));
+    return extraFilesFrom(JSON.parse(readFileSync(RELEASE_CONFIG, "utf8")));
   } catch {
     return [];
   }
@@ -132,10 +149,58 @@ function compareCommits(baseSha, headSha) {
 
 function readAt(sha, path) {
   try {
-    return git(["show", `${sha}:${path}`]);
+    return execFileSync("git", ["show", `${sha}:${path}`], {
+      encoding: "utf8",
+      maxBuffer: 50 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
   } catch {
     return null;
   }
+}
+
+function readBufferAt(sha, path) {
+  try {
+    return execFileSync("git", ["show", `${sha}:${path}`], { maxBuffer: 50 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return null;
+  }
+}
+
+async function fetchRevendorSource() {
+  let error = null;
+  for (let attempt = 1; attempt <= REVENDOR_SOURCE_ATTEMPTS; attempt++) {
+    if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, REVENDOR_SOURCE_BACKOFF_MS));
+    try {
+      const response = await fetch(REVENDOR_SOURCE_URL, { signal: AbortSignal.timeout(REVENDOR_SOURCE_TIMEOUT_MS) });
+      if (response.ok) return { source: Buffer.from(await response.arrayBuffer()) };
+      error = `HTTP ${response.status}`;
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+    console.error(`staging spec fetch attempt ${attempt} of ${REVENDOR_SOURCE_ATTEMPTS} failed: ${error}`);
+  }
+  return { error: `${error} after ${REVENDOR_SOURCE_ATTEMPTS} attempts` };
+}
+
+function blobAt(sha, path) {
+  try {
+    return execFileSync("git", ["rev-parse", "--verify", "--quiet", `${sha}:${path}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+async function revendorSourceReason({ headSha, mergeBase, mainSha }) {
+  return compareRevendorSource({
+    head: readBufferAt(headSha, REVENDOR_PATH),
+    baseBlob: blobAt(mergeBase, REVENDOR_PATH),
+    mainBlob: blobAt(mainSha, REVENDOR_PATH),
+    ...(await fetchRevendorSource()),
+  });
 }
 
 function writeSummary(verdict) {
@@ -152,20 +217,8 @@ function writeSummary(verdict) {
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
 }
 
-function parseLabels(text) {
-  try {
-    const parsed = JSON.parse(text ?? "[]");
-    return Array.isArray(parsed) ? parsed.filter((name) => typeof name === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function main() {
+async function main() {
   const headSha = process.env.HEAD_SHA;
-  const headRef = process.env.HEAD_REF;
-  const pullNumber = process.env.PR_NUMBER;
-  const runId = process.env.GITHUB_RUN_ID;
   if (!REPO || !headSha) {
     console.error("GITHUB_REPOSITORY and HEAD_SHA are required");
     process.exit(2);
@@ -185,18 +238,23 @@ function main() {
     git(["diff", "--no-renames", "--numstat", mergeBase, headSha]),
   );
 
+  const headRef = process.env.HEAD_REF;
+  const pullNumber = process.env.PR_NUMBER;
+  const pullRequest = { author: process.env.PR_AUTHOR, headRef, number: pullNumber, headSha };
   const verdict = judgePullRequest({
     baseRef: process.env.BASE_REF,
-    pullRequest: { author: process.env.PR_AUTHOR, headRef, number: pullNumber, headSha },
+    pullRequest,
     event: { action: process.env.EVENT_ACTION, label: process.env.EVENT_LABEL, sender: process.env.EVENT_SENDER },
     labels: parseLabels(process.env.PR_LABELS),
     labelsMayBeStale: Number(process.env.RUN_ATTEMPT) > 1,
-    resolveVouch: (pull) => resolveVouch({ ...pull, headRef, mainSha, runId }),
+    resolveVouch: (pull) => resolveVouch({ ...pull, headRef, mainSha, runId: process.env.GITHUB_RUN_ID }),
     commits: compare.commits,
     totalCommits: compare.total_commits,
     gitCommitShas,
     changes,
     read: (path, side) => readAt(side === "base" ? mergeBase : headSha, path),
+    releaseConfigured: existsSync(RELEASE_CONFIG),
+    revendorSourceReason: isRevendorPullRequest(pullRequest) ? await revendorSourceReason({ headSha, mergeBase, mainSha }) : undefined,
     extraFiles: readExtraFiles(),
     isAncestorOfMain: (sha) => gitSucceeds(["merge-base", "--is-ancestor", sha, MAIN_REF]),
     mergeTreeOf: (first, second) => {
@@ -213,4 +271,7 @@ function main() {
   if (!verdict.ok) process.exit(1);
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
