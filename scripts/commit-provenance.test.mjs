@@ -23,10 +23,11 @@ import {
 const SSH = "-----BEGIN SSH SIGNATURE-----\nabc\n-----END SSH SIGNATURE-----";
 const PGP = "-----BEGIN PGP SIGNATURE-----\nabc\n-----END PGP SIGNATURE-----";
 
-function signed(sha, { login = "Monoradioactivo", signature = SSH, reason = "valid", verified = true, parents = ["p0"], tree = "t0" } = {}) {
+function signed(sha, { login = "Monoradioactivo", author = null, signature = SSH, reason = "valid", verified = true, parents = ["p0"], tree = "t0" } = {}) {
   return {
     sha,
     parents: parents.map((parent) => ({ sha: parent })),
+    ...(author ? { author: { login: author } } : {}),
     committer: { login },
     commit: { tree: { sha: tree }, verification: { verified, reason, signature } },
   };
@@ -34,6 +35,14 @@ function signed(sha, { login = "Monoradioactivo", signature = SSH, reason = "val
 
 function webFlow(sha, options = {}) {
   return signed(sha, { login: "web-flow", signature: PGP, ...options });
+}
+
+function renovateCommit(sha, options = {}) {
+  return webFlow(sha, { author: "renovate[bot]", ...options });
+}
+
+function branchWrite(after, { actor = "renovate[bot]", type = "force_push" } = {}) {
+  return { activity_type: type, actor: { login: actor }, after };
 }
 
 const onMain = new Set(["main1", "main2"]);
@@ -122,6 +131,65 @@ test("the label vouches only on its own labeled event, applied by an allowed act
   assert.equal(isLabelVouch({ action: "labeled", label: "brief-verified", sender: "aetherpush-release-bot[bot]" }), false);
   assert.equal(isLabelVouch({ action: "labeled", label: "dependencies", sender: "Monoradioactivo" }), false);
   assert.equal(isLabelVouch({ action: "unlabeled", label: "brief-verified", sender: "Monoradioactivo" }), false);
+});
+
+test("the release vouch bot's label vouches and the Renovate agent App's does not", () => {
+  assert.equal(isLabelVouch({ action: "labeled", label: "brief-verified", sender: "aether-release-vouch[bot]" }), true);
+  assert.equal(isLabelVouch({ action: "labeled", label: "brief-verified", sender: "aether-renovate-dispatch[bot]" }), false);
+  const renovate = renovateCommit("r1");
+  const pullRequest = { ...adrianPull, number: 42, headSha: "r1" };
+  const readActivity = () => [branchWrite("r1")];
+  const labeled = judge({ commits: [renovate], pullRequest, readActivity, event: { action: "labeled", label: "brief-verified", sender: "aether-release-vouch[bot]" } });
+  assert.equal(labeled.ok, true);
+  assert.equal(labeled.via, "brief-verified label applied by aether-release-vouch[bot]");
+  const agent = judge({ commits: [renovate], pullRequest, readActivity, event: { action: "labeled", label: "brief-verified", sender: "aether-renovate-dispatch[bot]" } });
+  assert.equal(agent.ok, false);
+});
+
+test("the release vouch bot's label vouches only for a head that Renovate alone wrote", () => {
+  const bot = { action: "labeled", label: "brief-verified", sender: "aether-release-vouch[bot]" };
+  const pullRequest = { ...adrianPull, number: 42, headSha: "f1" };
+  const renovateWrote = () => [branchWrite("f1")];
+  const verdict = (commits, readActivity) => judge({ commits, pullRequest, readActivity, event: bot });
+  assert.equal(verdict([renovateCommit("f1")], renovateWrote).ok, true);
+  const forged = verdict([renovateCommit("r1"), renovateCommit("f1", { parents: ["r1"] })], () => [branchWrite("f1", { actor: "aether-renovate-dispatch[bot]", type: "push" }), branchWrite("r1")]);
+  assert.equal(forged.ok, false);
+  assert.match(forged.reasons.join("\n"), /written by aether-renovate-dispatch\[bot\] as push/);
+  assert.equal(verdict([renovateCommit("f1")], () => [branchWrite("f1", { type: "push" })]).ok, false);
+  const agentRewrite = verdict([renovateCommit("f1")], () => [branchWrite("f1", { actor: "aether-renovate-dispatch[bot]" })]);
+  assert.equal(agentRewrite.ok, false);
+  assert.match(agentRewrite.reasons.join("\n"), /written by aether-renovate-dispatch\[bot\] as force_push/);
+  assert.equal(verdict([renovateCommit("f1")], () => [branchWrite("r0")]).ok, false);
+  const unread = verdict([renovateCommit("f1")], () => null);
+  assert.equal(unread.ok, false);
+  assert.match(unread.reasons.join("\n"), /push activity could not be read/);
+  const agentCommit = verdict([webFlow("f1", { author: "aether-renovate-dispatch[bot]" })], renovateWrote);
+  assert.match(agentCommit.reasons.join("\n"), /is not a single-parent web-flow commit by renovate\[bot\]/);
+  assert.equal(verdict([webFlow("f1")], renovateWrote).ok, false);
+  const adrian = judge({ commits: [webFlow("f1")], pullRequest, readActivity: () => null, event: { ...bot, sender: "Monoradioactivo" } });
+  assert.equal(adrian.ok, true);
+});
+
+test("a label never covers a commit without exactly one parent unless it is a clean web-flow merge of main", () => {
+  const labeled = { action: "labeled", label: "brief-verified", sender: "Monoradioactivo" };
+  const forged = webFlow("m1", { parents: ["pr1", "main1"], tree: "attacker-tree" });
+  const verdict = judge({ commits: [webFlow("pr1"), forged], event: labeled });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reasons.join("\n"), /differs from a clean merge/);
+  const stray = webFlow("m2", { parents: ["pr1", "old-branch"], tree: "clean-tree" });
+  assert.equal(judge({ commits: [webFlow("pr1"), stray], event: labeled }).ok, false);
+  const conflicted = webFlow("m4", { parents: ["pr1", "main2"], tree: "clean-tree" });
+  assert.equal(judge({ commits: [webFlow("pr1"), conflicted], event: labeled }).ok, false);
+  assert.equal(standing({ commits: [webFlow("pr1"), forged] }).ok, false);
+  const octopus = webFlow("m5", { parents: ["pr1", "main1", "x1"], tree: "attacker-tree" });
+  assert.equal(judge({ commits: [webFlow("pr1"), octopus], event: labeled }).ok, false);
+  const orphan = webFlow("m6", { parents: [], tree: "attacker-tree" });
+  assert.equal(judge({ commits: [orphan], event: labeled }).ok, false);
+  const unsignedMerge = signed("m7", { login: "someone-else", signature: PGP, parents: ["pr1", "main1"], tree: "attacker-tree" });
+  assert.equal(judge({ commits: [webFlow("pr1"), unsignedMerge], event: labeled }).ok, false);
+  const clean = webFlow("m3", { parents: ["pr1", "main1"], tree: "clean-tree" });
+  assert.equal(judge({ commits: [webFlow("pr1"), clean], event: labeled }).ok, true);
+  assert.equal(standing({ commits: [webFlow("pr1"), clean] }).ok, true);
 });
 
 test("a Renovate pull request passes on the labeled event and fails on the next push", () => {
@@ -596,6 +664,7 @@ function standing(overrides = {}) {
     labels = ["brief-verified"],
     liveLabels = ["brief-verified"],
     labelsMayBeStale,
+    readActivity,
     ...vouch
   } = overrides;
   return judge({
@@ -603,6 +672,7 @@ function standing(overrides = {}) {
     pullRequest: vouchPull,
     labels,
     labelsMayBeStale,
+    ...(readActivity ? { readActivity } : {}),
     resolveVouch: () => ({
       runId: VOUCH_RUN_ID,
       labels: liveLabels,
@@ -617,6 +687,22 @@ test("a vouched head keeps passing on a later event while the label is still the
   const verdict = standing();
   assert.equal(verdict.ok, true);
   assert.equal(verdict.via, "brief-verified label applied by Monoradioactivo");
+});
+
+test("a standing vouch from the release vouch bot holds at its head and one from the agent App does not", () => {
+  const bot = { actor: "aether-release-vouch[bot]" };
+  const renovateHead = { commits: [renovateCommit("h2")], readActivity: () => [branchWrite("h2")] };
+  const vouched = standing({ ...renovateHead, labelEvents: [labelEvent(10, "labeled", bot)], runs: [ownRun, vouchRun(7, "labeled", bot)] });
+  assert.equal(vouched.ok, true);
+  assert.equal(vouched.via, "brief-verified label applied by aether-release-vouch[bot]");
+  const pushedOver = standing({ commits: [renovateCommit("h2")], readActivity: () => [branchWrite("h2", { actor: "aether-renovate-dispatch[bot]", type: "push" })], labelEvents: [labelEvent(10, "labeled", bot)], runs: [ownRun, vouchRun(7, "labeled", bot)] });
+  assert.equal(pushedOver.ok, false);
+  const agent = { actor: "aether-renovate-dispatch[bot]" };
+  const refused = standing({ labelEvents: [labelEvent(10, "labeled", agent)], runs: [ownRun, vouchRun(7, "labeled", agent)] });
+  assert.equal(refused.ok, false);
+  assert.match(refused.reasons.join("\n"), /sent by aether-renovate-dispatch\[bot\]/);
+  const movedHead = standing({ labelEvents: [labelEvent(10, "labeled", bot)], runs: [ownRun, vouchRun(7, "labeled", { ...bot, headSha: "h1" })] });
+  assert.equal(movedHead.ok, false);
 });
 
 test("the vouch dies with the label", () => {

@@ -1,7 +1,9 @@
 export const DEFAULT_TRUSTED_SIGNERS = ["Monoradioactivo"];
 export const DEFAULT_VERIFIED_LABEL = "brief-verified";
-export const DEFAULT_LABEL_ACTOR_ALLOWLIST = ["Monoradioactivo"];
+export const DEFAULT_LABEL_ACTOR_ALLOWLIST = ["Monoradioactivo", "aether-release-vouch[bot]"];
 export const DEFAULT_RELEASE_BOT_LOGIN = "aetherpush-release-bot[bot]";
+export const DEFAULT_BOT_VOUCHERS = ["aether-release-vouch[bot]"];
+export const DEFAULT_RENOVATE_LOGIN = "renovate[bot]";
 export const PROTECTED_BRANCH = "main";
 export const WEB_FLOW_LOGIN = "web-flow";
 export const RELEASE_BRANCH_PREFIX = "release-please--branches--main";
@@ -84,14 +86,14 @@ export function classifyCommit(commit, { signers = DEFAULT_TRUSTED_SIGNERS, isAn
   if (isMergeShape(commit)) {
     const [first, second] = commit.parents.map((parent) => parent.sha);
     if (!isAncestorOfMain(second)) {
-      return { sha, ok: false, webFlow: true, reason: `merge commit ${short(sha)} brings in ${short(second)}, which is not on main` };
+      return { sha, ok: false, webFlow: true, merge: true, reason: `merge commit ${short(sha)} brings in ${short(second)}, which is not on main` };
     }
     const cleanTree = mergeTreeOf(first, second);
     if (cleanTree === null) {
-      return { sha, ok: false, webFlow: true, reason: `merge commit ${short(sha)} does not merge its parents cleanly` };
+      return { sha, ok: false, webFlow: true, merge: true, reason: `merge commit ${short(sha)} does not merge its parents cleanly` };
     }
     if (cleanTree !== commit?.commit?.tree?.sha) {
-      return { sha, ok: false, webFlow: true, reason: `merge commit ${short(sha)} carries a tree that differs from a clean merge of its parents` };
+      return { sha, ok: false, webFlow: true, merge: true, reason: `merge commit ${short(sha)} carries a tree that differs from a clean merge of its parents` };
     }
     return { sha, ok: true, via: "clean merge of main" };
   }
@@ -99,8 +101,27 @@ export function classifyCommit(commit, { signers = DEFAULT_TRUSTED_SIGNERS, isAn
     sha,
     ok: false,
     webFlow: isWebFlowCommit(commit),
+    merge: !(Array.isArray(commit?.parents) && commit.parents.length === 1),
     reason: `commit ${short(sha)} is not signed by a trusted key`,
   };
+}
+
+const WHOLE_BRANCH_WRITES = new Set(["force_push", "branch_creation"]);
+
+export function renovateOnlyHeadReason({ commits, activity, headSha, renovateLogin = DEFAULT_RENOVATE_LOGIN }) {
+  if (!Array.isArray(commits) || commits.length === 0) return "the head carries no commits to judge";
+  for (const commit of commits) {
+    if (!isWebFlowCommit(commit) || commit?.author?.login !== renovateLogin || commit?.parents?.length !== 1) {
+      return `commit ${short(commit?.sha)} is not a single-parent web-flow commit by ${renovateLogin}`;
+    }
+  }
+  if (!Array.isArray(activity)) return "the branch's push activity could not be read";
+  const newest = activity.find((entry) => typeof entry?.after === "string");
+  if (!newest || newest.after !== headSha) return `the newest write to the branch is not ${short(headSha)}`;
+  if (newest.actor?.login !== renovateLogin || !WHOLE_BRANCH_WRITES.has(newest.activity_type)) {
+    return `${short(headSha)} was written by ${newest.actor?.login ?? "an unknown account"} as ${newest.activity_type ?? "an unknown write"}, not by ${renovateLogin} rewriting the branch`;
+  }
+  return null;
 }
 
 export function isLabelVouch(event, label = DEFAULT_VERIFIED_LABEL, actors = DEFAULT_LABEL_ACTOR_ALLOWLIST) {
@@ -419,6 +440,8 @@ export function judgePullRequest({
   label = DEFAULT_VERIFIED_LABEL,
   labelActors = DEFAULT_LABEL_ACTOR_ALLOWLIST,
   releaseBotLogin = DEFAULT_RELEASE_BOT_LOGIN,
+  botVouchers = DEFAULT_BOT_VOUCHERS,
+  readActivity = () => null,
   isAncestorOfMain,
   mergeTreeOf,
 }) {
@@ -443,13 +466,20 @@ export function judgePullRequest({
   if (classified.every((entry) => entry.ok)) {
     return { ok: true, via: "every commit is trusted", reasons: [], commits: classified };
   }
-  if (!labelsMayBeStale && isLabelVouch(event, label, labelActors)) {
-    return { ok: true, via: `${label} label applied by ${event.sender}`, reasons: [], commits: classified };
-  }
+  const labelCanVouch = !classified.some((entry) => entry.merge);
   const pullNumber = pullRequest?.number;
   const headSha = pullRequest?.headSha;
+  let botReason = undefined;
+  const botVouchHolds = () => {
+    if (botReason === undefined) botReason = renovateOnlyHeadReason({ commits, activity: readActivity(), headSha });
+    return botReason === null;
+  };
+  const vouchedBy = (actor) => !botVouchers.includes(actor) || botVouchHolds();
+  if (labelCanVouch && !labelsMayBeStale && isLabelVouch(event, label, labelActors) && vouchedBy(event.sender)) {
+    return { ok: true, via: `${label} label applied by ${event.sender}`, reasons: [], commits: classified };
+  }
   const standing =
-    (labels.includes(label) || labelsMayBeStale) && resolveVouch
+    labelCanVouch && (labels.includes(label) || labelsMayBeStale) && resolveVouch
       ? judgeStandingVouch({
           ...resolveVouch({ pullNumber, headSha }),
           pullNumber,
@@ -458,7 +488,7 @@ export function judgePullRequest({
           actors: labelActors,
         })
       : null;
-  if (standing?.ok) {
+  if (standing?.ok && vouchedBy(standing.actor)) {
     return { ok: true, via: `${label} label applied by ${standing.actor}`, reasons: [], commits: classified };
   }
 
@@ -483,6 +513,7 @@ export function judgePullRequest({
     return footprintVerdict(classified, footprint, `re-vendor pull request whose ${REVENDOR_PATH} matches ${REVENDOR_SOURCE_URL}`);
   }
   const reasons = classified.filter((entry) => !entry.ok).map((entry) => entry.reason);
-  if (standing) reasons.push(standing.reason);
+  if (standing && !standing.ok) reasons.push(standing.reason);
+  if (botReason) reasons.push(`the ${label} label from ${botVouchers.join(", ")} vouches only for a head that is Renovate's alone: ${botReason}`);
   return { ok: false, via: null, reasons, commits: classified };
 }

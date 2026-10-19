@@ -1,9 +1,8 @@
 export const DEFAULT_VERIFIED_LABEL = "brief-verified";
 export const REQUIRED_TEST_CHECK = "Node 22";
 export const REQUIRED_TEST_APP = "github-actions";
-export const DEFAULT_LABEL_ACTOR_ALLOWLIST = ["Monoradioactivo"];
+export const DEFAULT_LABEL_ACTOR_ALLOWLIST = ["Monoradioactivo", "aether-release-vouch[bot]"];
 export const DEFAULT_RELEASE_BOT_LOGIN = "aetherpush-release-bot[bot]";
-export const DEFAULT_RENOVATE_BOT_LOGIN = "renovate[bot]";
 
 const TRAILER_LINE = /^Brief-Verified:[ \t]*\S/i;
 const TRAILER_SHAPE = /^[A-Za-z][A-Za-z0-9-]*:[ \t]/;
@@ -77,7 +76,6 @@ export function classifyCommit(
   label = DEFAULT_VERIFIED_LABEL,
   allowedLabelActors = DEFAULT_LABEL_ACTOR_ALLOWLIST,
   releaseBotLogin = DEFAULT_RELEASE_BOT_LOGIN,
-  renovateBotLogin = DEFAULT_RENOVATE_BOT_LOGIN,
 ) {
   const sha = String(commit.sha).slice(0, 7);
   const subject = subjectOf(commit.message);
@@ -114,19 +112,8 @@ export function classifyCommit(
   }
 
   const labelVia = `${label} label`;
-  const renovateAuthored =
-    !resolved.authorUnread && resolved.author != null && String(resolved.author) === renovateBotLogin;
-  const via = hasTrailer
-    ? "Brief-Verified trailer"
-    : labels.includes(label)
-      ? labelVia
-      : renovateAuthored
-        ? "Renovate pull request"
-        : null;
+  const via = hasTrailer ? "Brief-Verified trailer" : labels.includes(label) ? labelVia : null;
   if (!via) {
-    if (resolved.authorUnread) {
-      return { sha, pr: number, subject, blessed: false, via: null, unresolved: true };
-    }
     if (refusedReleaseAuthor) {
       return {
         sha,

@@ -436,7 +436,7 @@ test("a Brief-Verified trailer is vouched without reading labeled events", () =>
   assert.doesNotMatch(run.stderr, /reading brief-verified events/);
 });
 
-test("a Renovate pull request is vouched by its author without reading labeled events", () => {
+test("an unlabelled Renovate pull request is refused without any Test check being read", () => {
   const run = runGate({
     env: {
       STUB_COMPARE: compareBody([{ sha: MERGE_SHA, message: "chore(deps): bump pg to 8.16.4" }]),
@@ -446,13 +446,31 @@ test("a Renovate pull request is vouched by its author without reading labeled e
         headSha: HEAD_SHA,
         author: "renovate[bot]",
       }),
-      STUB_EVENTS_FAIL_ALWAYS: "1",
+      STUB_CHECK_RUNS_UNEXPECTED: "1",
+    },
+  });
+
+  assert.equal(run.verdict.ok, false);
+  assert.match(run.verdict.reasons[0], /#376 .*carries neither a Brief-Verified trailer nor the brief-verified label/);
+  assert.doesNotMatch(run.stderr, /UNEXPECTED_CHECK_RUNS_CALL/);
+});
+
+test("a Renovate pull request labelled by the release vouch bot is blessed", () => {
+  const run = runGate({
+    env: {
+      STUB_COMPARE: compareBody([{ sha: MERGE_SHA, message: "chore(deps): bump pg to 8.16.4" }]),
+      STUB_COMMIT_PULLS: commitPulls({
+        number: 376,
+        labels: ["brief-verified"],
+        headSha: HEAD_SHA,
+        author: "renovate[bot]",
+      }),
+      STUB_EVENTS: ndjson([{ actor: "aether-release-vouch[bot]", at: "2026-10-19T13:20:00Z" }]),
     },
   });
 
   assert.equal(run.verdict.ok, true);
-  assert.equal(run.verdict.commits[0].via, "Renovate pull request");
-  assert.doesNotMatch(run.stderr, /reading brief-verified events/);
+  assert.equal(run.verdict.commits[0].via, "brief-verified label");
 });
 
 test("an unvouched commit is refused without any Test check being read", () => {
