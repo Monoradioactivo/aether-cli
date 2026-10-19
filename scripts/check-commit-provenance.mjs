@@ -78,6 +78,16 @@ function vouchRuns(headRef) {
     }));
 }
 
+function branchActivity(headRef) {
+  try {
+    const entries = ghJson(["api", `repos/${REPO}/activity?ref=${encodeURIComponent(`refs/heads/${headRef}`)}&direction=desc&per_page=${RUN_PAGE_SIZE}`]);
+    return Array.isArray(entries) ? entries : null;
+  } catch (error) {
+    console.error(`reading the push activity of ${headRef} failed: ${error instanceof Error ? error.message : error}`);
+    return null;
+  }
+}
+
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -143,7 +153,7 @@ function compareCommits(baseSha, headSha) {
     "api",
     `repos/${REPO}/compare/${baseSha}...${headSha}`,
     "--jq",
-    "{total_commits, merge_base: .merge_base_commit.sha, commits: [.commits[] | {sha, parents: [.parents[] | {sha}], committer: {login: .committer.login}, commit: {tree: {sha: .commit.tree.sha}, verification: .commit.verification}}]}",
+    "{total_commits, merge_base: .merge_base_commit.sha, commits: [.commits[] | {sha, parents: [.parents[] | {sha}], author: {login: .author.login}, committer: {login: .committer.login}, commit: {tree: {sha: .commit.tree.sha}, verification: .commit.verification}}]}",
   ]);
 }
 
@@ -248,6 +258,7 @@ async function main() {
     labels: parseLabels(process.env.PR_LABELS),
     labelsMayBeStale: Number(process.env.RUN_ATTEMPT) > 1,
     resolveVouch: (pull) => resolveVouch({ ...pull, headRef, mainSha, runId: process.env.GITHUB_RUN_ID }),
+    readActivity: () => branchActivity(headRef),
     commits: compare.commits,
     totalCommits: compare.total_commits,
     gitCommitShas,
