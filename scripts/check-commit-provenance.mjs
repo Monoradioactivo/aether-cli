@@ -13,6 +13,7 @@ import {
   REVENDOR_SOURCE_URL,
   VOUCH_RUN_NAME,
   VOUCH_WORKFLOW_PATH,
+  withTransientRetry,
 } from "./commit-provenance.mjs";
 
 const REPO = process.env.GITHUB_REPOSITORY;
@@ -48,34 +49,47 @@ function ghPages(path) {
 }
 
 function currentLabels(pullNumber) {
-  return ghPages(`repos/${REPO}/issues/${pullNumber}/labels?per_page=${RUN_PAGE_SIZE}`)
-    .flat()
-    .map((entry) => entry?.name)
-    .filter((name) => typeof name === "string");
+  return withTransientRetry({
+    name: "labels",
+    run: () =>
+      ghPages(`repos/${REPO}/issues/${pullNumber}/labels?per_page=${RUN_PAGE_SIZE}`)
+        .flat()
+        .map((entry) => entry?.name)
+        .filter((name) => typeof name === "string"),
+  });
 }
 
 function labelEvents(pullNumber) {
-  return ghPages(`repos/${REPO}/issues/${pullNumber}/events?per_page=${RUN_PAGE_SIZE}`)
-    .flat()
-    .map((entry) => ({
-      id: entry?.id,
-      action: entry?.event,
-      label: entry?.label?.name,
-      actor: entry?.actor?.login,
-    }));
+  return withTransientRetry({
+    name: "label events",
+    run: () =>
+      ghPages(`repos/${REPO}/issues/${pullNumber}/events?per_page=${RUN_PAGE_SIZE}`)
+        .flat()
+        .map((entry) => ({
+          id: entry?.id,
+          action: entry?.event,
+          label: entry?.label?.name,
+          actor: entry?.actor?.login,
+        })),
+  });
 }
 
 function vouchRuns(headRef) {
-  const query = `event=pull_request&per_page=${RUN_PAGE_SIZE}&branch=${encodeURIComponent(headRef)}`;
-  return ghPages(`repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?${query}`)
-    .flatMap((page) => page?.workflow_runs ?? [])
-    .map((run) => ({
-      id: run?.id,
-      runNumber: run?.run_number,
-      title: run?.display_title,
-      actor: run?.actor?.login,
-      headSha: run?.head_sha,
-    }));
+  return withTransientRetry({
+    name: "workflow runs",
+    run: () => {
+      const query = `event=pull_request&per_page=${RUN_PAGE_SIZE}&branch=${encodeURIComponent(headRef)}`;
+      return ghPages(`repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?${query}`)
+        .flatMap((page) => page?.workflow_runs ?? [])
+        .map((run) => ({
+          id: run?.id,
+          runNumber: run?.run_number,
+          title: run?.display_title,
+          actor: run?.actor?.login,
+          headSha: run?.head_sha,
+        }));
+    },
+  });
 }
 
 function branchActivity(headRef) {
