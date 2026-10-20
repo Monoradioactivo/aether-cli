@@ -17,6 +17,8 @@ export const VOUCH_WORKFLOW_PATH = ".github/workflows/commit-provenance.yml";
 export const VERSION_BLOCK_START = "x-release-please-start-version";
 export const VERSION_BLOCK_END = "x-release-please-end";
 export const MAX_COMPARE_COMMITS = 250;
+export const VOUCH_READ_ATTEMPTS = 3;
+export const VOUCH_READ_BACKOFF_MS = 1_000;
 
 const SSH_SIGNATURE = "-----BEGIN SSH SIGNATURE-----";
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
@@ -25,6 +27,42 @@ const RELEASE_MANIFEST = ".release-please-manifest.json";
 
 function short(sha) {
   return String(sha ?? "").slice(0, 7);
+}
+
+export function isTransientGhFailure(error) {
+  const text = `${error?.stderr ?? ""} ${error?.message ?? ""}`;
+  const match = text.match(/HTTP (\d{3})/);
+  const status = match ? Number(match[1]) : null;
+  return status === null || status === 429 || status >= 500 || /rate limit/i.test(text);
+}
+
+export function withTransientRetry({
+  name,
+  run,
+  attempts = VOUCH_READ_ATTEMPTS,
+  backoffMs = VOUCH_READ_BACKOFF_MS,
+  sleep = (ms) => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  },
+}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return run();
+    } catch (error) {
+      lastError = error;
+      const transient = isTransientGhFailure(error);
+      if (!transient || attempt === attempts) {
+        if (transient) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(`${name} read exhausted after ${attempts} attempts: ${detail}`);
+        }
+        throw error;
+      }
+      sleep(backoffMs * attempt);
+    }
+  }
+  throw lastError;
 }
 
 export function parseNameStatus(nameStatus, numstat) {

@@ -10,6 +10,7 @@ import {
   isNextVersion,
   isReleasePullRequest,
   isRevendorPullRequest,
+  isTransientGhFailure,
   isTrustedSignerCommit,
   judgePullRequest,
   MAX_COMPARE_COMMITS,
@@ -18,6 +19,7 @@ import {
   revendorFootprintReasons,
   versionMarkedLines,
   vouchRunTitle,
+  withTransientRetry,
 } from "./commit-provenance.mjs";
 
 const SSH = "-----BEGIN SSH SIGNATURE-----\nabc\n-----END SSH SIGNATURE-----";
@@ -904,6 +906,79 @@ test("an unlabelled release pull request passes on its footprint without reading
   });
   assert.equal(verdict.ok, true);
   assert.equal(consulted, false);
+});
+
+function ghFailure(status, message, { stderr } = {}) {
+  const error = new Error(status === null ? message : `HTTP ${status}: ${message}`);
+  if (stderr !== undefined) error.stderr = stderr;
+  return error;
+}
+
+test("isTransientGhFailure matches 5xx, network errors and rate limits, not a plain 403 or 404", () => {
+  assert.equal(isTransientGhFailure(ghFailure(502, "Bad Gateway")), true);
+  assert.equal(isTransientGhFailure(ghFailure(429, "Too Many Requests")), true);
+  assert.equal(isTransientGhFailure(ghFailure(403, "API rate limit exceeded")), true);
+  assert.equal(isTransientGhFailure(ghFailure(403, "You have exceeded a secondary rate limit")), true);
+  assert.equal(isTransientGhFailure(new Error("spawn gh ENOENT")), true);
+  assert.equal(isTransientGhFailure(ghFailure(403, "Resource not accessible by integration")), false);
+  assert.equal(isTransientGhFailure(ghFailure(404, "Not Found")), false);
+});
+
+test("withTransientRetry returns once a later attempt succeeds", () => {
+  let attempts = 0;
+  const sleeps = [];
+  const result = withTransientRetry({
+    name: "labels",
+    attempts: 3,
+    backoffMs: 10,
+    sleep: (ms) => sleeps.push(ms),
+    run: () => {
+      attempts += 1;
+      if (attempts < 3) throw ghFailure(502, "Bad Gateway");
+      return ["brief-verified"];
+    },
+  });
+  assert.deepEqual(result, ["brief-verified"]);
+  assert.equal(attempts, 3);
+  assert.deepEqual(sleeps, [10, 20]);
+});
+
+test("withTransientRetry names the read that exhausted its attempts", () => {
+  let attempts = 0;
+  assert.throws(
+    () =>
+      withTransientRetry({
+        name: "label events",
+        attempts: 2,
+        backoffMs: 0,
+        sleep: () => {},
+        run: () => {
+          attempts += 1;
+          throw ghFailure(503, "Service Unavailable");
+        },
+      }),
+    /label events read exhausted after 2 attempts: HTTP 503/,
+  );
+  assert.equal(attempts, 2);
+});
+
+test("withTransientRetry does not retry a non-transient refusal", () => {
+  let attempts = 0;
+  assert.throws(
+    () =>
+      withTransientRetry({
+        name: "workflow runs",
+        attempts: 3,
+        backoffMs: 0,
+        sleep: () => {},
+        run: () => {
+          attempts += 1;
+          throw ghFailure(403, "Resource not accessible by integration");
+        },
+      }),
+    /HTTP 403: Resource not accessible by integration/,
+  );
+  assert.equal(attempts, 1);
 });
 
 function readWorkflow() {
