@@ -1,6 +1,6 @@
 {
   "name": "TestApp",
   "dependencies": {
-    "react-native": "0.87.1"
+    "react-native": "0.88.0"
   }
 }
