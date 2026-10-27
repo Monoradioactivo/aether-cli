@@ -216,7 +216,7 @@ export function holdCommentMarker(reasons) {
   return `${HOLD_COMMENT_MARKER_PREFIX}:${digest} -->`;
 }
 
-function writeOutput(verdict) {
+function writeOutput(verdict, evaluatedHead = "") {
   if (!process.env.GITHUB_OUTPUT) return;
   const delimiter = `GATE_${randomUUID().replace(/-/g, "")}`;
   const reasons = verdict.reasons.length > 0 ? verdict.reasons.join("; ") : "every commit in the release is accounted for";
@@ -224,6 +224,7 @@ function writeOutput(verdict) {
   appendFileSync(process.env.GITHUB_OUTPUT, `ok=${verdict.ok}\n`);
   appendFileSync(process.env.GITHUB_OUTPUT, `reasons<<${delimiter}\n${oneLine}\n${delimiter}\n`);
   appendFileSync(process.env.GITHUB_OUTPUT, `marker=${holdCommentMarker(oneLine)}\n`);
+  appendFileSync(process.env.GITHUB_OUTPUT, `head=${evaluatedHead}\n`);
 }
 
 function main() {
@@ -234,6 +235,25 @@ function main() {
 
   const releasePr = Number(process.argv[2] || 0);
   const baseTag = process.argv[3] || latestReleaseTag();
+
+  let evaluatedHead = "";
+  let currentVersion = null;
+  let releaseVersion = null;
+  let versionsRequired = false;
+  if (releasePr) {
+    versionsRequired = true;
+    const pr = ghJson([
+      "api",
+      `repos/${REPO}/pulls/${releasePr}`,
+      "--jq",
+      "{head: .head.ref, base: .base.ref, sha: .head.sha}",
+    ]);
+    if (pr) {
+      evaluatedHead = typeof pr.sha === "string" ? pr.sha : "";
+      currentVersion = versionFromRef(pr.base);
+      releaseVersion = versionFromRef(pr.head);
+    }
+  }
 
   let commits = [];
   let rangeTruncated = false;
@@ -247,25 +267,13 @@ function main() {
         versionsRequired: false,
       });
       console.log(JSON.stringify(verdict, null, 2));
-      writeOutput(verdict);
+      writeOutput(verdict, evaluatedHead);
       return;
     }
     rangeTruncated = range.truncated;
     commits = range.commits.map((c) =>
       classifyCommit(c, (sha) => resolvePullRequest(sha, c), LABEL, LABEL_ACTORS, RELEASE_BOT_LOGIN),
     );
-  }
-
-  let currentVersion = null;
-  let releaseVersion = null;
-  let versionsRequired = false;
-  if (releasePr) {
-    versionsRequired = true;
-    const pr = ghJson(["api", `repos/${REPO}/pulls/${releasePr}`, "--jq", "{head: .head.ref, base: .base.ref}"]);
-    if (pr) {
-      currentVersion = versionFromRef(pr.base);
-      releaseVersion = versionFromRef(pr.head);
-    }
   }
 
   const verdict = buildVerdict({
@@ -279,7 +287,7 @@ function main() {
   });
 
   console.log(JSON.stringify(verdict, null, 2));
-  writeOutput(verdict);
+  writeOutput(verdict, evaluatedHead);
 }
 
 const entry = process.argv[1];

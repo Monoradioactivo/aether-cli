@@ -283,9 +283,16 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REASONS: ${{ steps.gate.outputs.reasons }}
           MARKER_ID: ${{ steps.gate.outputs.marker }}
+          EVALUATED_HEAD: ${{ steps.gate.outputs.head }}
           PR: ${{ steps.pr.outputs.number }}
         run: |
           set -o pipefail
+          CURRENT_HEAD=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid \
+            --jq '.headRefOid // empty' || true)
+          if [ -n "$EVALUATED_HEAD" ] && [ -n "$CURRENT_HEAD" ] && [ "$CURRENT_HEAD" != "$EVALUATED_HEAD" ]; then
+            echo "Left #$PR alone: this run evaluated $EVALUATED_HEAD, but the pull request head is now $CURRENT_HEAD, so these reasons no longer describe that head." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           STARTED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at || true)
           ARMED_AT=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json autoMergeRequest \
             --jq '.autoMergeRequest.enabledAt // empty' || true)
@@ -325,8 +332,16 @@ jobs:
         if: failure() && steps.pr.outputs.number != '' && (steps.arm.outputs.result == 'auto' || steps.gate.outputs.ok == 'false')
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          EVALUATED_HEAD: ${{ steps.gate.outputs.head }}
           PR: ${{ steps.pr.outputs.number }}
-        run: gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --disable-auto || true
+        run: |
+          CURRENT_HEAD=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid \
+            --jq '.headRefOid // empty' || true)
+          if [ -n "$EVALUATED_HEAD" ] && [ -n "$CURRENT_HEAD" ] && [ "$CURRENT_HEAD" != "$EVALUATED_HEAD" ]; then
+            echo "Left #$PR armed: this run evaluated $EVALUATED_HEAD, but the pull request head is now $CURRENT_HEAD." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --disable-auto || true
 
       - name: Report the verdict
         if: steps.pr.outputs.number != ''

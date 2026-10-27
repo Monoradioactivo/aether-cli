@@ -134,6 +134,7 @@ function packageJson(version) {
 const RELEASE_PR_REFS = JSON.stringify({
   head: "release-please--branches--main--components--fixture",
   base: "main",
+  sha: HEAD_SHA,
 });
 
 function runGate({ args = ["0", BASE_TAG], env = {}, repo = REPO } = {}) {
@@ -211,6 +212,18 @@ test("a label-vouched commit with a successful Test check is blessed", () => {
   assert.match(run.output, /^ok=true$/m);
   assert.match(run.output, /^reasons<<GATE_[0-9a-f]{32}$/m);
   assert.match(run.output, /^marker=<!-- release-auto-merge-gate:[0-9a-f]{16} -->$/m);
+  assert.match(run.output, /^head=$/m);
+});
+
+test("a gate run for a release pull request writes the evaluated head for the hold step", () => {
+  const run = runGate({
+    args: ["448", BASE_TAG],
+    env: labelVouchedCommit({
+      STUB_EVENTS: ndjson([{ actor: "Monoradioactivo", at: "2026-09-10T19:49:24Z" }]),
+    }),
+  });
+  assert.equal(run.status, 0);
+  assert.match(run.output, new RegExp(`^head=${HEAD_SHA}$`, "m"));
 });
 
 function markerOf(run) {

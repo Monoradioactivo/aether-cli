@@ -272,6 +272,7 @@ const STEP_EXPRESSIONS = {
   "${{ steps.pr.outputs.number }}": "prNumber",
   "${{ steps.gate.outputs.reasons }}": "reasons",
   "${{ steps.gate.outputs.marker }}": "marker",
+  "${{ steps.gate.outputs.head }}": "evaluatedHead",
 };
 
 function stepEnv(step, context) {
@@ -352,6 +353,8 @@ function runStep(doc, step, context) {
 const RUN_STARTED_AT = "2026-10-06T12:00:00Z";
 const ARMED_BEFORE_RUN = "2026-10-06T11:59:30Z";
 const ARMED_AFTER_RUN = "2026-10-06T12:00:30Z";
+const EVAL_HEAD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const LIVE_HEAD_OTHER = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 const MARKER_A = "<!-- release-auto-merge-gate:aaaaaaaaaaaaaaaa -->";
 const MARKER_B = "<!-- release-auto-merge-gate:bbbbbbbbbbbbbbbb -->";
@@ -367,18 +370,43 @@ function holdComment(marker, reasons) {
   return `${marker}\nThis release is held for a human merge:\n\n${reasons}\n`;
 }
 
+function prViewPayload({ enabledAt = null, headRefOid = EVAL_HEAD } = {}) {
+  return JSON.stringify({
+    headRefOid,
+    autoMergeRequest: enabledAt ? { enabledAt } : null,
+  });
+}
+
 function runHold(context) {
   const doc = gateWorkflow();
   const steps = gateSteps(doc);
   const hold = steps[indexOfStep(steps, "Hold the release for a human")];
   assert.ok(hold, "the gate job lost its hold step");
+  const { prView, evaluatedHead, ...rest } = context;
   return runStep(doc, hold, {
     token: "stub-app-token",
     prNumber: "42",
     reasons: REASONS_A,
     marker: MARKER_A,
     comments: heldComments(),
-    ...context,
+    evaluatedHead: evaluatedHead === undefined ? EVAL_HEAD : evaluatedHead,
+    prView: prView ?? prViewPayload(),
+    ...rest,
+  });
+}
+
+function runDisarmIfFailed(context) {
+  const doc = gateWorkflow();
+  const steps = gateSteps(doc);
+  const disarm = steps[indexOfStep(steps, "Disarm if this run failed")];
+  assert.ok(disarm, "the gate job lost its disarm-on-failure step");
+  const { prView, evaluatedHead, ...rest } = context;
+  return runStep(doc, disarm, {
+    token: "stub-app-token",
+    prNumber: "42",
+    evaluatedHead: evaluatedHead === undefined ? EVAL_HEAD : evaluatedHead,
+    prView: prView ?? prViewPayload(),
+    ...rest,
   });
 }
 
@@ -387,7 +415,7 @@ function disarmCalls(calls) {
 }
 
 test("a hold leaves an arm another run placed after this run started", () => {
-  const result = runHold({ prView: JSON.stringify({ autoMergeRequest: { enabledAt: ARMED_AFTER_RUN } }) });
+  const result = runHold({ prView: prViewPayload({ enabledAt: ARMED_AFTER_RUN }) });
   assert.deepEqual(
     disarmCalls(result.calls),
     [],
@@ -398,7 +426,7 @@ test("a hold leaves an arm another run placed after this run started", () => {
 });
 
 test("a hold disarms an arm this run's own verdict covers", () => {
-  const result = runHold({ prView: JSON.stringify({ autoMergeRequest: { enabledAt: ARMED_BEFORE_RUN } }) });
+  const result = runHold({ prView: prViewPayload({ enabledAt: ARMED_BEFORE_RUN }) });
   assert.equal(disarmCalls(result.calls).length, 1, "a release this run refused was left armed");
 });
 
@@ -410,15 +438,52 @@ test("a hold with nothing armed still asks for the disarm, as it always did", ()
 test("a hold whose arm read fails disarms rather than leaving an arm it could not judge", () => {
   const onReadFailure = runHold({ prViewFail: "1" });
   assert.equal(disarmCalls(onReadFailure.calls).length, 1, "an unreadable arm was left in place, so a refused release could still merge");
-  const onRunFailure = runHold({ runFail: "1", prView: JSON.stringify({ autoMergeRequest: { enabledAt: ARMED_AFTER_RUN } }) });
+  const onRunFailure = runHold({
+    runFail: "1",
+    prView: prViewPayload({ enabledAt: ARMED_AFTER_RUN }),
+  });
   assert.equal(disarmCalls(onRunFailure.calls).length, 1, "an unreadable run start was treated as an arm worth keeping");
 });
 
-test("the hold step reads its marker from the gate, so the two never drift apart", () => {
+test("a hold whose evaluated head no longer matches the pull request head leaves the arm and does not comment", () => {
+  const result = runHold({
+    evaluatedHead: EVAL_HEAD,
+    prView: prViewPayload({ enabledAt: ARMED_BEFORE_RUN, headRefOid: LIVE_HEAD_OTHER }),
+  });
+  assert.deepEqual(disarmCalls(result.calls), [], "a stale hold disarmed a newer head's arm");
+  assert.doesNotMatch(result.calls, /pr comment/, "a stale hold commented reasons that no longer describe the head");
+  assert.match(result.summary, new RegExp(`evaluated ${EVAL_HEAD}`));
+  assert.match(result.summary, new RegExp(`now ${LIVE_HEAD_OTHER}`));
+});
+
+test("a hold with an empty evaluated head falls through to disarm rather than leaving an arm it could not pin", () => {
+  const result = runHold({
+    evaluatedHead: "",
+    prView: prViewPayload({ enabledAt: ARMED_BEFORE_RUN, headRefOid: LIVE_HEAD_OTHER }),
+  });
+  assert.equal(disarmCalls(result.calls).length, 1, "an empty evaluated head was treated as a head mismatch and left the arm");
+});
+
+test("the hold step reads its marker and evaluated head from the gate, so the two never drift apart", () => {
   const steps = gateSteps();
   const hold = steps[indexOfStep(steps, "Hold the release for a human")];
   assert.equal(hold.env.MARKER_ID, "${{ steps.gate.outputs.marker }}");
   assert.equal(hold.env.REASONS, "${{ steps.gate.outputs.reasons }}");
+  assert.equal(hold.env.EVALUATED_HEAD, "${{ steps.gate.outputs.head }}");
+});
+
+test("a failed-run disarm whose evaluated head no longer matches leaves the arm alone", () => {
+  const result = runDisarmIfFailed({
+    evaluatedHead: EVAL_HEAD,
+    prView: prViewPayload({ headRefOid: LIVE_HEAD_OTHER }),
+  });
+  assert.deepEqual(disarmCalls(result.calls), [], "Disarm if this run failed wiped an arm for a newer head");
+  assert.match(result.summary, /Left #42 armed/);
+});
+
+test("a failed-run disarm on the same head still asks for the disarm", () => {
+  const result = runDisarmIfFailed({});
+  assert.equal(disarmCalls(result.calls).length, 1);
 });
 
 test("a held release with no hold comment yet gets one naming its reasons", () => {
