@@ -12,7 +12,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: commit-provenance-${{ github.event.pull_request.number }}
+  group: commit-provenance-${{ github.event.pull_request.number }}-${{ startsWith(github.head_ref, 'release-please--') && github.event.pull_request.head.sha || 'any-head' }}
   cancel-in-progress: true
 
 jobs:
