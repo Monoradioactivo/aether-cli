@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--') && format('ci-{0}-{1}', github.head_ref, github.event.pull_request.head.sha) || format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'release-please--') }}
 
 jobs:
   branch-name:
@@ -70,7 +70,7 @@ jobs:
         run: node --test scripts/behind-bot.test.mjs
 
       - name: Commit provenance tests
-        run: node --test scripts/commit-provenance.test.mjs
+        run: node --test scripts/commit-provenance.test.mjs scripts/ci-concurrency-head.test.mjs
 
       - name: Test
         run: npm test
