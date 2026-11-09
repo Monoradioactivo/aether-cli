@@ -78,7 +78,7 @@ function vouchRuns(headRef) {
   return withTransientRetry({
     name: "workflow runs",
     run: () => {
-      const query = `event=pull_request&per_page=${RUN_PAGE_SIZE}&branch=${encodeURIComponent(headRef)}`;
+      const query = `event=pull_request_target&per_page=${RUN_PAGE_SIZE}&branch=${encodeURIComponent(headRef)}`;
       return ghPages(`repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?${query}`)
         .flatMap((page) => page?.workflow_runs ?? [])
         .map((run) => ({
