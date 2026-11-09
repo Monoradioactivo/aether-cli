@@ -103,16 +103,25 @@ function finishedLater(run, previous) {
   return time > previousTime || (time === previousTime && run.id > previous.id);
 }
 
-export function requiredCheckState(requiredContexts, checkRuns, statuses) {
-  const latest = new Map();
+function isPinned(requiredCheck) {
+  return requiredCheck.integration_id !== null && requiredCheck.integration_id !== undefined;
+}
+
+function latestRunFor(requiredCheck, checkRuns) {
+  let latest = null;
   for (const run of checkRuns) {
-    const previous = latest.get(run.name);
-    if (!previous || finishedLater(run, previous)) latest.set(run.name, run);
+    if (run.name !== requiredCheck.context) continue;
+    if (isPinned(requiredCheck) && run.app_id !== requiredCheck.integration_id) continue;
+    if (!latest || finishedLater(run, latest)) latest = run;
   }
+  return latest;
+}
+
+export function requiredCheckState(requiredChecks, checkRuns, statuses) {
   const statusByContext = new Map(statuses.map((status) => [status.context, status.state]));
   let pending = false;
-  for (const context of requiredContexts) {
-    const run = latest.get(context);
+  for (const requiredCheck of requiredChecks) {
+    const run = latestRunFor(requiredCheck, checkRuns);
     if (run) {
       if (run.status !== "completed") {
         pending = true;
@@ -121,7 +130,11 @@ export function requiredCheckState(requiredContexts, checkRuns, statuses) {
       if (FAILED_CONCLUSIONS.has(run.conclusion)) return "failing";
       continue;
     }
-    const state = statusByContext.get(context);
+    if (isPinned(requiredCheck)) {
+      pending = true;
+      continue;
+    }
+    const state = statusByContext.get(requiredCheck.context);
     if (state === undefined || state === "pending") {
       pending = true;
       continue;
@@ -202,19 +215,19 @@ export function createGitHub({ gh, repository, readToken, updateToken }) {
         "--jq",
         ".data.repository.pullRequests.nodes",
       ]).map(normalizePr),
-    requiredContexts: () =>
+    requiredChecks: () =>
       readJson([
         "api",
         `repos/${repository}/rules/branches/main`,
         "--jq",
-        '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]',
+        '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[] | {context, integration_id}]',
       ]),
     checkRuns: (sha) =>
       readJson([
         "api",
         `repos/${repository}/commits/${sha}/check-runs?per_page=100`,
         "--jq",
-        "[.check_runs[] | {id, name, status, conclusion, completed_at}]",
+        "[.check_runs[] | {id, name, status, conclusion, completed_at, app_id: .app.id}]",
       ]),
     statuses: (sha) =>
       readJson(["api", `repos/${repository}/commits/${sha}/status`, "--jq", "[.statuses[] | {context, state}]"]),
@@ -271,7 +284,7 @@ function isServingMain(head, mainSha, now) {
 export async function run({ github, config, now, sleep, notify, summary }) {
   const mainSha = github.mainSha();
   const prs = github.openPrs();
-  const required = github.requiredContexts();
+  const required = github.requiredChecks();
   const checksOf = (sha) => requiredCheckState(required, github.checkRuns(sha), github.statuses(sha));
   const armed = prs.filter((pr) => pr.armedAt);
   const heads = new Map(armed.map((pr) => [pr.number, github.commit(pr.headRefOid)]));
