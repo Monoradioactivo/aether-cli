@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   baseSkipReason,
+  checksInFlight,
   classifyUpdateError,
   configFromEnv,
   createGitHub,
@@ -79,18 +80,27 @@ function fakeGitHub({
     mainSha: () => MAIN,
     openPrs: () => prs.map((item) => ({ ...item })),
     requiredChecks: () => required,
-    checkRuns: (sha) => checks[sha] ?? [{ id: 1, name: "YAML lint", status: "completed", conclusion: "success" }],
+    checkRuns: (sha) => {
+      const entry = checks[sha];
+      if (typeof entry === "function") return entry();
+      return entry ?? [{ id: 1, name: "YAML lint", status: "completed", conclusion: "success" }];
+    },
     statuses: (sha) => statuses[sha] ?? [],
     commit: (sha) => commits[sha] ?? { parents: [OLD_MAIN], author: "Monoradioactivo", date: "2026-09-21T15:00:00Z" },
     compareFiles: () => compare,
     mergeStateStatus: (number) => {
       calls.mergeStatePolls += 1;
-      const queue = mergeStates[number] ?? ["BEHIND"];
+      const listed = prs.find((item) => item.number === number)?.mergeStateStatus;
+      const queue = mergeStates[number] ?? [listed === "BLOCKED" ? "BLOCKED" : "BEHIND"];
       return queue.length > 1 ? queue.shift() : queue[0];
     },
     headSha: (number) => {
       const queue = heads[number];
-      if (!queue) return "n".repeat(40);
+      if (!queue) {
+        const listed = prs.find((item) => item.number === number);
+        const updated = calls.updates.some((call) => call.number === number);
+        return listed && !updated ? listed.headRefOid : "n".repeat(40);
+      }
       return queue.length > 1 ? queue.shift() : queue[0];
     },
     updateBranch: (number, expected) => {
@@ -491,6 +501,149 @@ test("a blocked marker on the head stops a later BEHIND update of that head", as
   const { result } = await exec(github);
   assert.deepEqual(github.calls.updates.map((call) => call.number), [2]);
   assert.equal(result.pr, 2);
+});
+
+const OWN_RUN_ID = "42539540657";
+const PASSING_LINT = { id: 1, name: "YAML lint", status: "completed", conclusion: "success" };
+const CODEQL_RUNNING = {
+  id: 2,
+  name: "Analyze (javascript-typescript)",
+  status: "in_progress",
+  conclusion: null,
+  details_url: "https://github.com/Monoradioactivo/aether-cli/actions/runs/42539460086/job/128910931146",
+};
+const OWN_RUN = {
+  id: 3,
+  name: "Update the oldest armed behind pull request",
+  status: "in_progress",
+  conclusion: null,
+  details_url: `https://github.com/Monoradioactivo/aether-cli/actions/runs/${OWN_RUN_ID}/job/128911169057`,
+};
+
+test("BLOCKED with passing required checks waits without a notice while another check on the head is still running", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const github = fakeGitHub({
+    prs: [blocked],
+    checks: { [blocked.headRefOid]: [PASSING_LINT, CODEQL_RUNNING, OWN_RUN] },
+  });
+  const { result, lines, notices } = await exec(github, { config: { ...BASE_CONFIG, runId: OWN_RUN_ID } });
+  assert.deepEqual(result, { action: "none", failures: 0 });
+  assert.deepEqual(notices, []);
+  assert.deepEqual(github.calls.comments, []);
+  assert.deepEqual(github.calls.updates, []);
+  assert.ok(lines.includes("Skip #1: required checks pass but other checks on its head are still running (Analyze (javascript-typescript))."));
+});
+
+function finishingAfter(reads, running, finished) {
+  let count = 0;
+  return () => {
+    count += 1;
+    return count > reads ? finished : running;
+  };
+}
+
+test("a BLOCKED head still blocked once its in-flight checks finish is reported in the same run", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const finished = [PASSING_LINT, { ...CODEQL_RUNNING, status: "completed", conclusion: "success" }, OWN_RUN];
+  const github = fakeGitHub({
+    prs: [blocked],
+    checks: { [blocked.headRefOid]: finishingAfter(3, [PASSING_LINT, CODEQL_RUNNING, OWN_RUN], finished) },
+    mergeStates: { 1: ["BLOCKED"] },
+  });
+  const { result, notices } = await exec(github, { config: { ...BASE_CONFIG, runId: OWN_RUN_ID } });
+  assert.deepEqual(result, { action: "none", failures: 1 });
+  assert.equal(notices.length, 1);
+  assert.equal(github.calls.comments.length, 1);
+  assert.equal(github.calls.mergeStatePolls, 1);
+});
+
+test("a BLOCKED head that a push replaced while the bot waited is not reported", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const github = fakeGitHub({ prs: [blocked], heads: { 1: ["p".repeat(40)] } });
+  const { result, lines, notices } = await exec(github);
+  assert.deepEqual(result, { action: "none", failures: 0 });
+  assert.deepEqual(notices, []);
+  assert.deepEqual(github.calls.comments, []);
+  assert.ok(lines.includes(`Skip #1: its head moved from ${blocked.headRefOid.slice(0, 7)} while the bot waited; a later wake judges the new head.`));
+});
+
+test("a BLOCKED head whose current head cannot be read is not reported", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const github = fakeGitHub({ prs: [blocked] });
+  github.headSha = () => {
+    throw ghError(502, "Bad Gateway");
+  };
+  const { result, notices } = await exec(github);
+  assert.deepEqual(result, { action: "none", failures: 0 });
+  assert.deepEqual(notices, []);
+});
+
+test("a BLOCKED head with every check finished is not reported when a second read no longer says BLOCKED", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const github = fakeGitHub({ prs: [blocked], mergeStates: { 1: ["UNKNOWN"] } });
+  const { result, lines, notices } = await exec(github);
+  assert.deepEqual(result, { action: "none", failures: 0 });
+  assert.deepEqual(notices, []);
+  assert.deepEqual(github.calls.comments, []);
+  assert.ok(lines.includes("#1: merge state UNKNOWN on a second read 15 seconds later; nothing to report."));
+});
+
+test("a BLOCKED head that clears once its in-flight checks finish is left alone without a notice", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const finished = [PASSING_LINT, { ...CODEQL_RUNNING, status: "completed", conclusion: "success" }];
+  const github = fakeGitHub({
+    prs: [blocked],
+    checks: { [blocked.headRefOid]: finishingAfter(1, [PASSING_LINT, CODEQL_RUNNING], finished) },
+    mergeStates: { 1: ["CLEAN"] },
+  });
+  const { result, lines, notices } = await exec(github, { config: { ...BASE_CONFIG, runId: OWN_RUN_ID } });
+  assert.deepEqual(result, { action: "none", failures: 0 });
+  assert.deepEqual(notices, []);
+  assert.deepEqual(github.calls.comments, []);
+  assert.deepEqual(github.calls.updates, []);
+  assert.ok(lines.includes("#1: merge state CLEAN on a second read 15 seconds later; nothing to report."));
+});
+
+test("the wait for in-flight checks is bounded, then the head is skipped for a later wake", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  let reads = 0;
+  const github = fakeGitHub({
+    prs: [blocked],
+    checks: { [blocked.headRefOid]: () => ((reads += 1), [PASSING_LINT, CODEQL_RUNNING]) },
+  });
+  const { result } = await exec(github, { config: { ...BASE_CONFIG, runId: OWN_RUN_ID } });
+  assert.deepEqual(result, { action: "none", failures: 0 });
+  assert.equal(reads, 13);
+  assert.equal(github.calls.mergeStatePolls, 0);
+});
+
+test("BLOCKED with passing required checks is reported when the only incomplete check on the head is the bot's own run", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const github = fakeGitHub({
+    prs: [blocked],
+    checks: { [blocked.headRefOid]: [PASSING_LINT, { ...CODEQL_RUNNING, status: "completed", conclusion: "success" }, OWN_RUN] },
+  });
+  const { result, notices } = await exec(github, { config: { ...BASE_CONFIG, runId: OWN_RUN_ID } });
+  assert.deepEqual(result, { action: "none", failures: 1 });
+  assert.equal(notices.length, 1);
+  assert.match(github.calls.comments[0].body, new RegExp(`<!-- behind-bot:blocked:${blocked.headRefOid} -->`));
+});
+
+test("without its run id the bot counts its own incomplete run as in flight", () => {
+  assert.deepEqual(checksInFlight([PASSING_LINT, OWN_RUN], null), ["Update the oldest armed behind pull request"]);
+  assert.deepEqual(checksInFlight([PASSING_LINT, OWN_RUN], OWN_RUN_ID), []);
+  assert.deepEqual(checksInFlight([PASSING_LINT, OWN_RUN], "4253954065"), ["Update the oldest armed behind pull request"]);
+});
+
+test("every status short of completed counts as in flight", () => {
+  const runs = ["queued", "in_progress", "waiting", "requested", "pending"].map((status, id) => ({ id, name: status, status, conclusion: null }));
+  assert.deepEqual(checksInFlight([...runs, PASSING_LINT], OWN_RUN_ID), ["queued", "in_progress", "waiting", "requested", "pending"]);
+});
+
+test("configuration reads the workflow run id from the environment, and none when it is unset or empty", () => {
+  assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO }).runId, null);
+  assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: "" }).runId, null);
+  assert.equal(configFromEnv({ GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: OWN_RUN_ID }).runId, OWN_RUN_ID);
 });
 
 test("BLOCKED with a failing required check is skipped without a notice", async () => {
@@ -1053,7 +1206,7 @@ test("the GitHub adapter keeps PR data out of argv and uses the App token only f
   assert.match(seen[3].args[1], /per_page=100&page=1$/);
 });
 
-test("the GitHub adapter reads each check run's completion time and app, and each required check's integration", () => {
+test("the GitHub adapter reads each check run's completion time, app and details link, and each required check's integration", () => {
   const seen = [];
   const gh = (args, token) => {
     seen.push({ args, token });
@@ -1068,7 +1221,7 @@ test("the GitHub adapter reads each check run's completion time and app, and eac
         "api",
         `repos/${REPO}/commits/${"a".repeat(40)}/check-runs?per_page=100`,
         "--jq",
-        "[.check_runs[] | {id, name, status, conclusion, completed_at, app_id: .app.id}]",
+        "[.check_runs[] | {id, name, status, conclusion, completed_at, app_id: .app.id, details_url}]",
       ],
       token: "read",
     },

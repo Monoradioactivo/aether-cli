@@ -11,6 +11,9 @@ const HEAD_POLLS = 30;
 const HEAD_POLL_MS = 3000;
 const UNKNOWN_POLLS = 5;
 const UNKNOWN_POLL_MS = 3000;
+const IN_FLIGHT_POLLS = 12;
+const IN_FLIGHT_POLL_MS = 10000;
+const BLOCKED_CONFIRM_MS = 15000;
 const SERIAL_WAIT_MAX_MS = 2 * 60 * 60 * 1000;
 const COMMENT_PAGES = 10;
 
@@ -144,6 +147,28 @@ export function requiredCheckState(requiredChecks, checkRuns, statuses) {
   return pending ? "pending" : "passing";
 }
 
+export function checksInFlight(checkRuns, ownRunId) {
+  const ownRunPath = ownRunId ? `/actions/runs/${ownRunId}/` : null;
+  return checkRuns
+    .filter((run) => run.status !== "completed")
+    .filter((run) => !ownRunPath || !String(run.details_url ?? "").includes(ownRunPath))
+    .map((run) => run.name);
+}
+
+async function waitForChecksInFlight({ github, required, pr, config, sleep }) {
+  const read = () => {
+    const runs = github.checkRuns(pr.headRefOid);
+    const checkState = requiredCheckState(required, runs, github.statuses(pr.headRefOid));
+    return { checkState, inFlight: checkState === "passing" ? checksInFlight(runs, config.runId) : [] };
+  };
+  let state = read();
+  for (let poll = 0; state.inFlight.length > 0 && poll < IN_FLIGHT_POLLS; poll += 1) {
+    await sleep(IN_FLIGHT_POLL_MS);
+    state = read();
+  }
+  return state;
+}
+
 export function touchesWorkflows(files) {
   if (!Array.isArray(files) || files.length >= COMPARE_FILE_LIMIT) return true;
   return files.some((file) => String(file.filename ?? "").startsWith(WORKFLOW_PREFIX));
@@ -227,7 +252,7 @@ export function createGitHub({ gh, repository, readToken, updateToken }) {
         "api",
         `repos/${repository}/commits/${sha}/check-runs?per_page=100`,
         "--jq",
-        "[.check_runs[] | {id, name, status, conclusion, completed_at, app_id: .app.id}]",
+        "[.check_runs[] | {id, name, status, conclusion, completed_at, app_id: .app.id, details_url}]",
       ]),
     statuses: (sha) =>
       readJson(["api", `repos/${repository}/commits/${sha}/status`, "--jq", "[.statuses[] | {context, state}]"]),
@@ -323,10 +348,30 @@ export async function run({ github, config, now, sleep, notify, summary }) {
     }
     summary(`#${pr.number}: merge state ${mergeState}.`);
     if (mergeState === "BLOCKED") {
-      const checkState = checksOf(pr.headRefOid);
+      const { checkState, inFlight } = await waitForChecksInFlight({ github, required, pr, config, sleep });
       if (checkState === "passing") {
+        if (inFlight.length > 0) {
+          summary(`Skip #${pr.number}: required checks pass but other checks on its head are still running (${inFlight.join(", ")}).`);
+          continue;
+        }
         if (reportedMarker(github, pr, config, mainSha)) {
           summary(`Skip #${pr.number}: already reported for head ${pr.headRefOid.slice(0, 7)}; waiting for a push to the branch.`);
+          continue;
+        }
+        await sleep(BLOCKED_CONFIRM_MS);
+        const confirmed = github.mergeStateStatus(pr.number);
+        if (confirmed !== "BLOCKED") {
+          summary(`#${pr.number}: merge state ${confirmed} on a second read ${BLOCKED_CONFIRM_MS / 1000} seconds later; nothing to report.`);
+          continue;
+        }
+        let currentHead = "";
+        try {
+          currentHead = github.headSha(pr.number);
+        } catch {
+          currentHead = "";
+        }
+        if (currentHead !== pr.headRefOid) {
+          summary(`Skip #${pr.number}: its head moved from ${pr.headRefOid.slice(0, 7)} while the bot waited; a later wake judges the new head.`);
           continue;
         }
         if (await reportSkip({ github, notify, summary, pr, kind: "blocked", files: [], status: null, config, mainSha })) failures += 1;
@@ -450,6 +495,7 @@ export function configFromEnv(env) {
     releaseBranchPrefix: env.RELEASE_BRANCH_PREFIX,
     releaseBotLogin: env.RELEASE_BOT_LOGIN,
     revendorBranch: env.REVENDOR_BRANCH || null,
+    runId: env.GITHUB_RUN_ID || null,
     train,
   };
 }
