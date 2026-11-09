@@ -1,4 +1,5 @@
 name: Commit provenance
+# probe: this head copy must not be the file that posts the check
 run-name: "Commit provenance #${{ github.event.pull_request.number }} ${{ github.event.action }} ${{ github.event.label.name }}"
 
 on:
