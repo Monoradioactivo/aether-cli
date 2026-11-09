@@ -1004,4 +1004,17 @@ test("the title the check looks for is the one the workflow renders", () => {
   assert.match(workflow, /PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}/);
   assert.match(workflow, /PR_LABELS: \$\{\{ toJSON\(github\.event\.pull_request\.labels\.\*\.name\) \}\}/);
   assert.match(workflow, /^\s{2}actions: read$/m);
+  assert.match(workflow, /^ {2}pull_request:$/m);
+  assert.match(workflow, /^ {2}pull_request_target:$/m);
+  assert.match(workflow, /head\.repo\.full_name != github\.repository/);
+  assert.match(workflow, /head\.repo\.full_name == github\.repository && 'provenance'/);
+  assert.match(workflow, /actions\/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510/);
+  assert.match(workflow, /secrets\.PROVENANCE_APP_PRIVATE_KEY/);
+  assert.match(workflow, /vars\.PROVENANCE_APP_ID/);
+});
+
+test("standing vouches read pull_request_target runs only", () => {
+  const source = readFileSync(new URL("./check-commit-provenance.mjs", import.meta.url), "utf8");
+  assert.match(source, /event=pull_request_target&/);
+  assert.doesNotMatch(source, /event=pull_request&/);
 });

@@ -437,10 +437,11 @@ function jobConcurrency(file) {
 const provenance = concurrencyOf("commit-provenance.yml");
 const ci = concurrencyOf("ci.yml");
 
-test("commit provenance is triggered by pull_request alone", () => {
+test("commit provenance is triggered by pull_request and pull_request_target", () => {
   const on = triggersOf("commit-provenance.yml");
-  assert.deepEqual(Object.keys(on), ["pull_request"]);
+  assert.deepEqual(Object.keys(on), ["pull_request", "pull_request_target"]);
   assert.deepEqual(on.pull_request.types, PROVENANCE_TYPES);
+  assert.deepEqual(on.pull_request_target.types, PROVENANCE_TYPES);
 });
 
 test("two heads of a release branch never share a commit provenance group", () => {
@@ -480,6 +481,12 @@ test("two pull requests never share a commit provenance group", () => {
     render(provenance.group, pull(ORDINARY_BRANCH, SHA_A, 1)),
     render(provenance.group, pull(ORDINARY_BRANCH, SHA_A, 2)),
   );
+});
+
+test("pull_request and pull_request_target do not share a commit provenance group", () => {
+  const opened = pull(ORDINARY_BRANCH, SHA_A, 7);
+  const target = { ...opened, eventName: "pull_request_target" };
+  assert.notEqual(render(provenance.group, opened), render(provenance.group, target));
 });
 
 test("a release head still cancels an in-flight commit provenance run", () => {

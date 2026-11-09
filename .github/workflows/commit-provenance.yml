@@ -3,7 +3,21 @@ run-name: "Commit provenance #${{ github.event.pull_request.number }} ${{ github
 
 on:
   pull_request:
-    types: [ opened, reopened, synchronize, labeled, unlabeled, ready_for_review ]
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+      - ready_for_review
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+      - ready_for_review
 
 permissions:
   actions: read
@@ -12,25 +26,55 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: commit-provenance-${{ github.event.pull_request.number }}-${{ startsWith(github.head_ref, 'release-please--') && github.event.pull_request.head.sha || 'any-head' }}
+  group: commit-provenance-${{ github.event_name }}-${{ github.event.pull_request.number }}-${{ startsWith(github.head_ref, 'release-please--') && github.event.pull_request.head.sha || 'any-head' }}
   cancel-in-progress: true
 
 jobs:
   provenance:
     name: Commit provenance
     runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository && 'provenance' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Refuse a fork before the key is read
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: exit 1
+
+      - name: Check out the default branch
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - name: Mint the provenance app token
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          app-id: ${{ vars.PROVENANCE_APP_ID }}
+          private-key: ${{ secrets.PROVENANCE_APP_PRIVATE_KEY }}
+          permission-checks: write
+
+      - name: Open the head check
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
+        id: open-check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          id=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" -f name='Commit provenance' -f head_sha="$HEAD_SHA" -f status='in_progress' --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       - name: Judge every commit in the pull request against main
+        id: judge
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -44,3 +88,16 @@ jobs:
           EVENT_LABEL: ${{ github.event.label.name }}
           EVENT_SENDER: ${{ github.event.sender.login }}
         run: node scripts/check-commit-provenance.mjs
+
+      - name: Finish the head check
+        if: always() && github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository && steps.app-token.outcome == 'success' && steps.open-check.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CHECK_ID: ${{ steps.open-check.outputs.id }}
+          JUDGE_OUTCOME: ${{ steps.judge.outcome }}
+        run: |
+          conclusion=failure
+          if [ "$JUDGE_OUTCOME" = "success" ]; then
+            conclusion=success
+          fi
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_ID}" -f status='completed' -f conclusion="$conclusion"
