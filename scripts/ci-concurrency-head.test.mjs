@@ -437,10 +437,9 @@ function jobConcurrency(file) {
 const provenance = concurrencyOf("commit-provenance.yml");
 const ci = concurrencyOf("ci.yml");
 
-test("commit provenance is triggered by pull_request and pull_request_target", () => {
+test("commit provenance is triggered by pull_request_target only", () => {
   const on = triggersOf("commit-provenance.yml");
-  assert.deepEqual(Object.keys(on), ["pull_request", "pull_request_target"]);
-  assert.deepEqual(on.pull_request.types, PROVENANCE_TYPES);
+  assert.deepEqual(Object.keys(on), ["pull_request_target"]);
   assert.deepEqual(on.pull_request_target.types, PROVENANCE_TYPES);
 });
 
