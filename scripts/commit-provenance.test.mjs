@@ -1004,7 +1004,7 @@ test("the title the check looks for is the one the workflow renders", () => {
   assert.match(workflow, /PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}/);
   assert.match(workflow, /PR_LABELS: \$\{\{ toJSON\(github\.event\.pull_request\.labels\.\*\.name\) \}\}/);
   assert.match(workflow, /^\s{2}actions: read$/m);
-  assert.match(workflow, /^ {2}pull_request:$/m);
+  assert.doesNotMatch(workflow, /^ {2}pull_request:$/m);
   assert.match(workflow, /^ {2}pull_request_target:$/m);
   assert.match(workflow, /head\.repo\.full_name != github\.repository/);
   assert.match(workflow, /head\.repo\.full_name == github\.repository && 'provenance'/);
