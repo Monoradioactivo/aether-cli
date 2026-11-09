@@ -56,12 +56,16 @@ function pr(number, overrides = {}) {
   };
 }
 
+function anyApp(...contexts) {
+  return contexts.map((context) => ({ context, integration_id: null }));
+}
+
 function fakeGitHub({
   prs,
   commits = {},
   checks = {},
   statuses = {},
-  required = ["YAML lint"],
+  required = anyApp("YAML lint"),
   mergeStates = {},
   updateResults = {},
   heads = {},
@@ -74,7 +78,7 @@ function fakeGitHub({
     calls,
     mainSha: () => MAIN,
     openPrs: () => prs.map((item) => ({ ...item })),
-    requiredContexts: () => required,
+    requiredChecks: () => required,
     checkRuns: (sha) => checks[sha] ?? [{ id: 1, name: "YAML lint", status: "completed", conclusion: "success" }],
     statuses: (sha) => statuses[sha] ?? [],
     commit: (sha) => commits[sha] ?? { parents: [OLD_MAIN], author: "Monoradioactivo", date: "2026-09-21T15:00:00Z" },
@@ -148,17 +152,17 @@ test("required check state takes the run per name that finished last whatever or
     { id: 20, name: "YAML lint", status: "completed", conclusion: "success", completed_at: "2026-09-21T15:20:00Z" },
     { id: 10, name: "YAML lint", status: "completed", conclusion: "failure", completed_at: "2026-09-21T15:10:00Z" },
   ];
-  assert.equal(requiredCheckState(["YAML lint"], newestFirst, []), "passing");
+  assert.equal(requiredCheckState(anyApp("YAML lint"), newestFirst, []), "passing");
   const oldestFirst = [...newestFirst].reverse();
-  assert.equal(requiredCheckState(["YAML lint"], oldestFirst, []), "passing");
+  assert.equal(requiredCheckState(anyApp("YAML lint"), oldestFirst, []), "passing");
   const failingNewest = [
     { id: 5, name: "YAML lint", status: "completed", conclusion: "timed_out", completed_at: "2026-09-21T15:30:00Z" },
     { id: 30, name: "YAML lint", status: "completed", conclusion: "success", completed_at: "2026-09-21T15:05:00Z" },
   ];
-  assert.equal(requiredCheckState(["YAML lint"], failingNewest, []), "failing");
-  assert.equal(requiredCheckState(["YAML lint"], [{ id: 1, name: "YAML lint", status: "queued", conclusion: null, completed_at: null }], []), "pending");
-  assert.equal(requiredCheckState(["Pages"], [], [{ context: "Pages", state: "error" }]), "failing");
-  assert.equal(requiredCheckState(["Pages"], [], []), "pending");
+  assert.equal(requiredCheckState(anyApp("YAML lint"), failingNewest, []), "failing");
+  assert.equal(requiredCheckState(anyApp("YAML lint"), [{ id: 1, name: "YAML lint", status: "queued", conclusion: null, completed_at: null }], []), "pending");
+  assert.equal(requiredCheckState(anyApp("Pages"), [], [{ context: "Pages", state: "error" }]), "failing");
+  assert.equal(requiredCheckState(anyApp("Pages"), [], []), "pending");
 });
 
 const TWIN_CHECKS = ["Lint & Typecheck", "Test", "Docker Build"];
@@ -185,9 +189,9 @@ const ORDINARY_IDS = { cancelledIds: [108471815573, 108471818302, 108471818806],
 const INVERTED_IDS = { cancelledIds: ORDINARY_IDS.survivorIds, survivorIds: ORDINARY_IDS.cancelledIds };
 
 test("a cancelled twin that finished before its successful twin reads as passing whichever run holds the higher id", () => {
-  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns(ORDINARY_IDS), []), "passing");
-  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns(INVERTED_IDS), []), "passing");
-  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns(INVERTED_IDS).reverse(), []), "passing");
+  assert.equal(requiredCheckState(anyApp(...TWIN_CHECKS), twinRuns(ORDINARY_IDS), []), "passing");
+  assert.equal(requiredCheckState(anyApp(...TWIN_CHECKS), twinRuns(INVERTED_IDS), []), "passing");
+  assert.equal(requiredCheckState(anyApp(...TWIN_CHECKS), twinRuns(INVERTED_IDS).reverse(), []), "passing");
 });
 
 test("a cancelled set that finished after a successful set reads as failing whichever run holds the higher id", () => {
@@ -205,15 +209,15 @@ test("a cancelled set that finished after a successful set reads as failing whic
     conclusion: "cancelled",
     completed_at: "2026-09-26T22:18:59Z",
   }));
-  assert.equal(requiredCheckState(TWIN_CHECKS, [...succeeded, ...cancelledLater], []), "failing");
+  assert.equal(requiredCheckState(anyApp(...TWIN_CHECKS), [...succeeded, ...cancelledLater], []), "failing");
   const cancelledLaterWithLowerIds = cancelledLater.map((run, index) => ({ ...run, id: succeeded[index].id - 1000 }));
-  assert.equal(requiredCheckState(TWIN_CHECKS, [...succeeded, ...cancelledLaterWithLowerIds], []), "failing");
+  assert.equal(requiredCheckState(anyApp(...TWIN_CHECKS), [...succeeded, ...cancelledLaterWithLowerIds], []), "failing");
 });
 
 test("a twin still running beside a cancelled one reads as pending whichever run holds the higher id", () => {
-  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns({ ...ORDINARY_IDS, survivorStatus: "in_progress" }), []), "pending");
-  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns({ ...INVERTED_IDS, survivorStatus: "in_progress" }), []), "pending");
-  assert.equal(requiredCheckState(TWIN_CHECKS, twinRuns({ ...INVERTED_IDS, survivorStatus: "queued" }), []), "pending");
+  assert.equal(requiredCheckState(anyApp(...TWIN_CHECKS), twinRuns({ ...ORDINARY_IDS, survivorStatus: "in_progress" }), []), "pending");
+  assert.equal(requiredCheckState(anyApp(...TWIN_CHECKS), twinRuns({ ...INVERTED_IDS, survivorStatus: "in_progress" }), []), "pending");
+  assert.equal(requiredCheckState(anyApp(...TWIN_CHECKS), twinRuns({ ...INVERTED_IDS, survivorStatus: "queued" }), []), "pending");
 });
 
 test("runs that finished in the same second fall back to the higher id", () => {
@@ -221,9 +225,9 @@ test("runs that finished in the same second fall back to the higher id", () => {
     { id: failingId, name: "Test", status: "completed", conclusion: "failure", completed_at: "2026-09-26T19:36:25Z" },
     { id: passingId, name: "Test", status: "completed", conclusion: "success", completed_at: "2026-09-26T19:36:25Z" },
   ];
-  assert.equal(requiredCheckState(["Test"], sameSecond(1, 2), []), "passing");
-  assert.equal(requiredCheckState(["Test"], sameSecond(2, 1), []), "failing");
-  assert.equal(requiredCheckState(["Test"], sameSecond(2, 1).reverse(), []), "failing");
+  assert.equal(requiredCheckState(anyApp("Test"), sameSecond(1, 2), []), "passing");
+  assert.equal(requiredCheckState(anyApp("Test"), sameSecond(2, 1), []), "failing");
+  assert.equal(requiredCheckState(anyApp("Test"), sameSecond(2, 1).reverse(), []), "failing");
 });
 
 test("a completed run without a readable completion time counts as finishing before every timed run", () => {
@@ -231,13 +235,54 @@ test("a completed run without a readable completion time counts as finishing bef
     { id: 2, name: "Test", status: "completed", conclusion: "failure", completed_at: null },
     { id: 1, name: "Test", status: "completed", conclusion: "success", completed_at: "2026-09-26T19:36:25Z" },
   ];
-  assert.equal(requiredCheckState(["Test"], runs, []), "passing");
-  assert.equal(requiredCheckState(["Test"], [...runs].reverse(), []), "passing");
+  assert.equal(requiredCheckState(anyApp("Test"), runs, []), "passing");
+  assert.equal(requiredCheckState(anyApp("Test"), [...runs].reverse(), []), "passing");
   const untimed = [
     { id: 2, name: "Test", status: "completed", conclusion: "failure", completed_at: "not a time" },
     { id: 1, name: "Test", status: "completed", conclusion: "success" },
   ];
-  assert.equal(requiredCheckState(["Test"], untimed, []), "failing");
+  assert.equal(requiredCheckState(anyApp("Test"), untimed, []), "failing");
+});
+
+const PROVENANCE_APP = 5673065;
+const ACTIONS_APP = 15368;
+const PINNED_PROVENANCE = [{ context: "Commit provenance", integration_id: PROVENANCE_APP }];
+
+function provenanceRuns({ pinned, other }) {
+  return [
+    { id: 128918034131, name: "Commit provenance", status: "completed", conclusion: pinned, completed_at: "2026-11-09T00:44:00Z", app_id: PROVENANCE_APP },
+    { id: 128917994600, name: "Commit provenance", status: "completed", conclusion: other, completed_at: "2026-11-09T00:44:05Z", app_id: ACTIONS_APP },
+  ];
+}
+
+const actionsRunOnly = (runs) => runs.filter((run) => run.app_id === ACTIONS_APP);
+
+test("a pinned required check reads only its integration's run when another app's same-name run finished later", () => {
+  assert.equal(requiredCheckState(PINNED_PROVENANCE, provenanceRuns({ pinned: "success", other: "failure" }), []), "passing");
+  assert.equal(requiredCheckState(PINNED_PROVENANCE, provenanceRuns({ pinned: "failure", other: "success" }), []), "failing");
+  assert.equal(requiredCheckState(PINNED_PROVENANCE, provenanceRuns({ pinned: "failure", other: "success" }).reverse(), []), "failing");
+  const pinnedQueued = provenanceRuns({ pinned: null, other: "success" }).map((run) =>
+    run.app_id === PROVENANCE_APP ? { ...run, status: "queued", completed_at: null } : run,
+  );
+  assert.equal(requiredCheckState(PINNED_PROVENANCE, pinnedQueued, []), "pending");
+});
+
+test("an unpinned required check still reads the same-name run that finished last whichever app posted it", () => {
+  assert.equal(requiredCheckState(anyApp("Commit provenance"), provenanceRuns({ pinned: "success", other: "failure" }), []), "failing");
+  assert.equal(requiredCheckState(anyApp("Commit provenance"), provenanceRuns({ pinned: "failure", other: "success" }), []), "passing");
+});
+
+test("a pinned required check with no run from its integration reads as pending whatever another app or a status says", () => {
+  assert.equal(requiredCheckState(PINNED_PROVENANCE, actionsRunOnly(provenanceRuns({ pinned: "success", other: "success" })), []), "pending");
+  assert.equal(requiredCheckState(PINNED_PROVENANCE, actionsRunOnly(provenanceRuns({ pinned: "success", other: "failure" })), []), "pending");
+  assert.equal(requiredCheckState(PINNED_PROVENANCE, [], [{ context: "Commit provenance", state: "success" }]), "pending");
+  assert.equal(requiredCheckState(PINNED_PROVENANCE, [], [{ context: "Commit provenance", state: "failure" }]), "pending");
+});
+
+test("each ruleset entry for one context is judged against its own pin", () => {
+  const pinnedTwice = [...PINNED_PROVENANCE, { context: "Commit provenance", integration_id: ACTIONS_APP }];
+  assert.equal(requiredCheckState(pinnedTwice, provenanceRuns({ pinned: "success", other: "success" }), []), "passing");
+  assert.equal(requiredCheckState(pinnedTwice, provenanceRuns({ pinned: "success", other: "failure" }), []), "failing");
 });
 
 test("a compare touching workflows, or one GitHub truncated, counts as touching", () => {
@@ -343,11 +388,38 @@ test("a failing required check skips to the next candidate", async () => {
   assert.deepEqual(github.calls.updates.map((call) => call.number), [2]);
 });
 
+test("an armed BEHIND head whose pinned check passed is updated though another app's same-name run failed later", async () => {
+  const twinned = pr(1);
+  const github = fakeGitHub({
+    prs: [twinned],
+    required: PINNED_PROVENANCE,
+    checks: { [twinned.headRefOid]: provenanceRuns({ pinned: "success", other: "failure" }) },
+  });
+  const { result, lines } = await exec(github);
+  assert.equal(result.action, "updated");
+  assert.deepEqual(github.calls.updates, [{ number: 1, expected: twinned.headRefOid }]);
+  assert.ok(!lines.some((line) => line.includes("a required check failed")));
+});
+
+test("a BLOCKED head missing its pinned check gets no marker though another app's same-name run passed", async () => {
+  const blocked = pr(1, { mergeStateStatus: "BLOCKED" });
+  const github = fakeGitHub({
+    prs: [blocked],
+    required: PINNED_PROVENANCE,
+    checks: { [blocked.headRefOid]: actionsRunOnly(provenanceRuns({ pinned: "success", other: "success" })) },
+  });
+  const { result, lines, notices } = await exec(github);
+  assert.deepEqual(result, { action: "none", failures: 0 });
+  assert.deepEqual(github.calls.comments, []);
+  assert.deepEqual(notices, []);
+  assert.ok(lines.includes("Skip #1: required checks still running while merge state is BLOCKED."));
+});
+
 test("a head whose cancelled twin holds the higher id is updated instead of skipped as failing", async () => {
   const twinned = pr(1);
   const github = fakeGitHub({
     prs: [twinned, pr(2)],
-    required: TWIN_CHECKS,
+    required: anyApp(...TWIN_CHECKS),
     checks: { [twinned.headRefOid]: twinRuns(INVERTED_IDS), [pr(2).headRefOid]: twinRuns(ORDINARY_IDS) },
   });
   const { result, lines } = await exec(github);
@@ -361,7 +433,7 @@ test("the queue waits on a bot merge carrying main whose cancelled twin holds th
   const waiting = pr(2);
   const github = fakeGitHub({
     prs: [pr(1), waiting],
-    required: TWIN_CHECKS,
+    required: anyApp(...TWIN_CHECKS),
     commits: { [waiting.headRefOid]: { parents: [OLD_MAIN, MAIN], author: BOT, date: "2026-09-21T15:55:00Z" } },
     checks: {
       [pr(1).headRefOid]: twinRuns(ORDINARY_IDS),
@@ -981,7 +1053,7 @@ test("the GitHub adapter keeps PR data out of argv and uses the App token only f
   assert.match(seen[3].args[1], /per_page=100&page=1$/);
 });
 
-test("the GitHub adapter reads each check run's completion time", () => {
+test("the GitHub adapter reads each check run's completion time and app, and each required check's integration", () => {
   const seen = [];
   const gh = (args, token) => {
     seen.push({ args, token });
@@ -989,13 +1061,23 @@ test("the GitHub adapter reads each check run's completion time", () => {
   };
   const github = createGitHub({ gh, repository: REPO, readToken: "read", updateToken: "app" });
   github.checkRuns("a".repeat(40));
+  github.requiredChecks();
   assert.deepEqual(seen, [
     {
       args: [
         "api",
         `repos/${REPO}/commits/${"a".repeat(40)}/check-runs?per_page=100`,
         "--jq",
-        "[.check_runs[] | {id, name, status, conclusion, completed_at}]",
+        "[.check_runs[] | {id, name, status, conclusion, completed_at, app_id: .app.id}]",
+      ],
+      token: "read",
+    },
+    {
+      args: [
+        "api",
+        `repos/${REPO}/rules/branches/main`,
+        "--jq",
+        '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[] | {context, integration_id}]',
       ],
       token: "read",
     },
