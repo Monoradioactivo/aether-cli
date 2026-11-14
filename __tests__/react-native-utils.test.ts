@@ -188,52 +188,247 @@ describe("react-native-utils", () => {
   });
 
   describe("getiOSHermesEnabled", () => {
+    const HERMES_LOCK =
+      "PODS:\n  - hermes-engine (0.81.4):\n    - hermes-engine/Pre-built (= 0.81.4)\n  - hermes-engine/Pre-built (0.81.4)\n  - React-hermes (0.81.4):\n    - hermes-engine\n\nDEPENDENCIES:\n  - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)\n\nSPEC CHECKSUMS:\n  hermes-engine: 0123456789abcdef\n";
+    const THIRD_PARTY_JSC_LOCK =
+      'PODS:\n  - React-jsc (0.2.0):\n    - React-jsi\n  - React-jsi (0.88.1)\n  - React-jsitooling (0.88.1)\n\nDEPENDENCIES:\n  - "React-jsc (from `../node_modules/@react-native-community/javascriptcore`)"\n';
+    const PLAIN_LOCK = "PODS:\n  - React-jsi (0.81.4)\n  - React-jsitooling (0.81.4)\n  - RCT-Folly (2024.11.18.00)\n";
+
+    function writePodProject(name: string, podfile: string, lock?: string): string {
+      const podPath = path.join(sandbox, name, "ios", "Podfile");
+      writeFile(podPath, podfile);
+      if (lock !== undefined) {
+        writeFile(path.join(sandbox, name, "ios", "Podfile.lock"), lock);
+      }
+      return podPath;
+    }
+
     it("returns true when Podfile contains `:hermes_enabled => true`", () => {
-      const podPath = path.join(sandbox, "pod-1", "Podfile");
-      writeFile(podPath, "use_react_native!(\n  :hermes_enabled => true\n)\n");
-      expect(rnUtils.getiOSHermesEnabled(podPath)).toBe(true);
+      const podPath = writePodProject("pod-1", "use_react_native!(\n  :hermes_enabled => true\n)\n");
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(true);
     });
 
     it("returns true when Podfile contains `hermes_enabled: true`", () => {
-      const podPath = path.join(sandbox, "pod-2", "Podfile");
-      writeFile(podPath, "use_react_native!(hermes_enabled: true)\n");
-      expect(rnUtils.getiOSHermesEnabled(podPath)).toBe(true);
+      const podPath = writePodProject("pod-2", "use_react_native!(hermes_enabled: true)\n");
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(true);
     });
 
-    it("returns false when hermes_enabled is missing", () => {
-      const podPath = path.join(sandbox, "pod-3", "Podfile");
-      writeFile(podPath, "use_react_native!()\n");
-      expect(rnUtils.getiOSHermesEnabled(podPath)).toBe(false);
+    it("returns false when hermes_enabled is missing and there is no Podfile.lock", () => {
+      const podPath = writePodProject("pod-3", "use_react_native!()\n");
+      const detection = rnUtils.getiOSHermesEnabled(podPath);
+      expect(detection.enabled).toBe(false);
+      expect(detection.reason).toMatch(/no Podfile\.lock next to/);
     });
 
     it("ignores commented-out hermes_enabled lines", () => {
-      const podPath = path.join(sandbox, "pod-4", "Podfile");
-      writeFile(podPath, "# :hermes_enabled => true\n");
-      expect(rnUtils.getiOSHermesEnabled(podPath)).toBe(false);
+      const podPath = writePodProject("pod-4", "# :hermes_enabled => true\n");
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(false);
     });
 
     it("throws when the Podfile does not exist", () => {
       expect(() => rnUtils.getiOSHermesEnabled(path.join(sandbox, "missing-podfile"))).toThrow(/Unable to find Podfile/);
     });
+
+    it("returns true for the current template Podfile when Podfile.lock lists the hermes-engine pod", () => {
+      const podPath = writePodProject("pod-lock-hermes", "use_react_native!(\n  :path => config[:reactNativePath]\n)\n", HERMES_LOCK);
+      const detection = rnUtils.getiOSHermesEnabled(podPath);
+      expect(detection.enabled).toBe(true);
+      expect(detection.reason).toMatch(/Podfile\.lock lists the hermes-engine pod/);
+    });
+
+    it("returns false when Podfile.lock lists no hermes-engine pod", () => {
+      const podPath = writePodProject("pod-lock-plain", "use_react_native!()\n", PLAIN_LOCK);
+      const detection = rnUtils.getiOSHermesEnabled(podPath);
+      expect(detection.enabled).toBe(false);
+      expect(detection.reason).toMatch(/lists no hermes-engine pod/);
+    });
+
+    it("returns false when Podfile.lock lists the React-jsc pod", () => {
+      const podPath = writePodProject("pod-lock-jsc", "use_react_native!()\n", THIRD_PARTY_JSC_LOCK);
+      const detection = rnUtils.getiOSHermesEnabled(podPath);
+      expect(detection.enabled).toBe(false);
+      expect(detection.reason).toMatch(/lists the React-jsc pod/);
+    });
+
+    it("lets the React-jsc pod win over a hermes-engine pod in the same Podfile.lock", () => {
+      const podPath = writePodProject("pod-lock-both", "use_react_native!()\n", HERMES_LOCK + THIRD_PARTY_JSC_LOCK);
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(false);
+    });
+
+    it("lets the React-jsc pod win over a hermes_enabled => true literal", () => {
+      const podPath = writePodProject("pod-lock-jsc-literal", "use_react_native!(\n  :hermes_enabled => true\n)\n", THIRD_PARTY_JSC_LOCK);
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(false);
+    });
+
+    it("reads the quoted DEPENDENCIES form of the React-jsc pod", () => {
+      const podPath = writePodProject(
+        "pod-lock-jsc-quoted",
+        "use_react_native!()\n",
+        HERMES_LOCK + '  - "React-jsc (from `../node_modules/@react-native-community/javascriptcore`)"\n'
+      );
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(false);
+    });
+
+    it("does not read React-jsi pods as React-jsc", () => {
+      const podPath = writePodProject("pod-lock-jsi", "use_react_native!()\n", HERMES_LOCK + PLAIN_LOCK);
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(true);
+    });
+
+    it("does not read the SPEC CHECKSUMS entry as a hermes-engine pod", () => {
+      const podPath = writePodProject("pod-lock-checksum", "use_react_native!()\n", "SPEC CHECKSUMS:\n  hermes-engine: 0123456789abcdef\n");
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(false);
+    });
+
+    it("reads the Podfile.lock next to a custom --podFile path", () => {
+      const podPath = path.join(sandbox, "pod-custom", "native", "apple", "Podfile");
+      writeFile(podPath, "use_react_native!()\n");
+      writeFile(path.join(sandbox, "pod-custom", "native", "apple", "Podfile.lock"), HERMES_LOCK);
+      writeFile(path.join(sandbox, "pod-custom", "ios", "Podfile.lock"), THIRD_PARTY_JSC_LOCK);
+      expect(rnUtils.getiOSHermesEnabled(podPath).enabled).toBe(true);
+    });
   });
 
   describe("getAndroidHermesEnabled", () => {
+    function writeAndroidProject(
+      name: string,
+      files: { buildGradle?: string; rootProperties?: string; appProperties?: string }
+    ): string {
+      const gradlePath = path.join(sandbox, name, "android", "app", "build.gradle");
+      writeFile(gradlePath, files.buildGradle ?? "android { }\n");
+      if (files.rootProperties !== undefined) {
+        writeFile(path.join(sandbox, name, "android", "gradle.properties"), files.rootProperties);
+      }
+      if (files.appProperties !== undefined) {
+        writeFile(path.join(sandbox, name, "android", "app", "gradle.properties"), files.appProperties);
+      }
+      return gradlePath;
+    }
+
     it("returns true when enableHermes is set to true in project.ext.react", async () => {
-      const gradlePath = path.join(sandbox, "gradle-hermes-on", "build.gradle");
-      writeFile(gradlePath, `project.ext.react = [\n  enableHermes: true\n]\n`);
-      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toBe(true);
+      const gradlePath = writeAndroidProject("gradle-hermes-on", { buildGradle: `project.ext.react = [\n  enableHermes: true\n]\n` });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: true });
     });
 
     it("returns false when enableHermes is set to false", async () => {
-      const gradlePath = path.join(sandbox, "gradle-hermes-off", "build.gradle");
-      writeFile(gradlePath, `project.ext.react = [\n  enableHermes: false\n]\n`);
-      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toBe(false);
+      const gradlePath = writeAndroidProject("gradle-hermes-off", { buildGradle: `project.ext.react = [\n  enableHermes: false\n]\n` });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: false });
     });
 
     it("rejects when the gradle file does not exist", async () => {
       await expect(rnUtils.getAndroidHermesEnabled(path.join(sandbox, "no-gradle-here", "build.gradle"))).rejects.toThrow(
         /Unable to find gradle file/
       );
+    });
+
+    it("returns true for the current template: hermesEnabled=true in android/gradle.properties", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-template", {
+        rootProperties: "# Use this property to enable or disable the Hermes JS engine.\n# If set to false, you will be using JSC instead.\nhermesEnabled=true\n",
+      });
+      const detection = await rnUtils.getAndroidHermesEnabled(gradlePath);
+      expect(detection.enabled).toBe(true);
+      expect(detection.reason).toMatch(/hermesEnabled=true in .*gradle\.properties/);
+    });
+
+    it("accepts the android/app directory as --gradleFile", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-dir", { rootProperties: "hermesEnabled=true\n" });
+      await expect(rnUtils.getAndroidHermesEnabled(path.dirname(gradlePath))).resolves.toMatchObject({ enabled: true });
+    });
+
+    it("returns false for hermesEnabled=false", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-off", { rootProperties: "hermesEnabled=false\n" });
+      const detection = await rnUtils.getAndroidHermesEnabled(gradlePath);
+      expect(detection.enabled).toBe(false);
+      expect(detection.reason).toMatch(/hermesEnabled=false/);
+    });
+
+    it("reads the value case-insensitively and trimmed", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-case", { rootProperties: "hermesEnabled = False   \n" });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: false });
+    });
+
+    it("treats a value that is not a boolean as on, like the React Native Gradle plugin", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-empty", { rootProperties: "hermesEnabled=\n" });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: true });
+    });
+
+    it("lets android/app/gradle.properties override android/gradle.properties", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-app-wins", {
+        rootProperties: "hermesEnabled=true\n",
+        appProperties: "hermesEnabled=false\n",
+      });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: false });
+    });
+
+    it("falls through to the root file when the app file does not define the key", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-root-only", {
+        rootProperties: "hermesEnabled=true\n",
+        appProperties: "android.useAndroidX=true\n",
+      });
+      const detection = await rnUtils.getAndroidHermesEnabled(gradlePath);
+      expect(detection.enabled).toBe(true);
+      expect(detection.reason).toMatch(/hermesEnabled=true in .*gradle-props-root-only[\\/]android[\\/]gradle\.properties\.$/);
+    });
+
+    it("reads react.hermesEnabled when hermesEnabled is absent", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-scoped", { rootProperties: "react.hermesEnabled=false\n" });
+      const detection = await rnUtils.getAndroidHermesEnabled(gradlePath);
+      expect(detection.enabled).toBe(false);
+      expect(detection.reason).toMatch(/react\.hermesEnabled=false/);
+    });
+
+    it("prefers hermesEnabled over react.hermesEnabled", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-both", { rootProperties: "react.hermesEnabled=false\nhermesEnabled=true\n" });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: true });
+    });
+
+    it("lets the gradle.properties value win over a legacy project.ext.react marker", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-over-legacy", {
+        buildGradle: `project.ext.react = [\n  enableHermes: true\n]\n`,
+        rootProperties: "hermesEnabled=false\n",
+      });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: false });
+    });
+
+    it("returns false for the third-party JSC setup, which pairs useThirdPartyJSC=true with hermesEnabled=false", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-jsc", { rootProperties: "hermesEnabled=false\nuseThirdPartyJSC=true\n" });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: false });
+    });
+
+    it("lets hermesEnabled=true win over useThirdPartyJSC=true, like the React Native Gradle plugin", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-jsc-and-hermes", { rootProperties: "hermesEnabled=true\nuseThirdPartyJSC=true\n" });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: true });
+    });
+
+    it("returns false when build.gradle scopes Hermes with enableHermesOnlyInVariants", async () => {
+      const gradlePath = writeAndroidProject("gradle-variant-scoped", {
+        buildGradle: 'react {\n    enableHermesOnlyInVariants = ["release"]\n}\n',
+        rootProperties: "hermesEnabled=true\n",
+      });
+      const detection = await rnUtils.getAndroidHermesEnabled(gradlePath);
+      expect(detection.enabled).toBe(false);
+      expect(detection.reason).toMatch(/enableHermesOnlyInVariants/);
+    });
+
+    it("ignores a commented-out enableHermesOnlyInVariants", async () => {
+      const gradlePath = writeAndroidProject("gradle-variant-commented", {
+        buildGradle: 'react {\n    // enableHermesOnlyInVariants = ["release"]\n}\n',
+        rootProperties: "hermesEnabled=true\n",
+      });
+      await expect(rnUtils.getAndroidHermesEnabled(gradlePath)).resolves.toMatchObject({ enabled: true });
+    });
+
+    it("reads a gradle.properties file that starts with a byte order mark", async () => {
+      const gradlePath = writeAndroidProject("gradle-props-bom", { rootProperties: String.fromCharCode(0xfeff) + "hermesEnabled=true\n" });
+      const detection = await rnUtils.getAndroidHermesEnabled(gradlePath);
+      expect(detection.enabled).toBe(true);
+      expect(detection.reason).toMatch(/hermesEnabled=true/);
+    });
+
+    it("returns false with a reason when neither marker is present", async () => {
+      const gradlePath = writeAndroidProject("gradle-no-markers", { rootProperties: "android.useAndroidX=true\n" });
+      const detection = await rnUtils.getAndroidHermesEnabled(gradlePath);
+      expect(detection.enabled).toBe(false);
+      expect(detection.reason).toMatch(/Hermes not detected/);
     });
   });
 
@@ -250,9 +445,14 @@ describe("react-native-utils", () => {
         JSON.stringify({ name: "test-app", dependencies: { "react-native": rnVersion } })
       );
 
+      const declaresHermesCompiler = parseInt(rnVersion.split(".")[1], 10) >= 84;
       writeFile(
         path.join(projectDir, "node_modules", "react-native", "package.json"),
-        JSON.stringify({ name: "react-native", version: rnVersion })
+        JSON.stringify({
+          name: "react-native",
+          version: rnVersion,
+          ...(declaresHermesCompiler ? { dependencies: { "hermes-compiler": "260318099.0.5" } } : {}),
+        })
       );
 
       if (includeBundledHermes) {
@@ -368,7 +568,7 @@ describe("react-native-utils", () => {
       expect(fs.existsSync(path.join(outputFolder, bundleName + ".hbc.map"))).toBe(false);
     });
 
-    it("forwards CODE_PUSH_NODE_ARGS env var into the hermes argv", async () => {
+    it("keeps the Node flags in CODE_PUSH_NODE_ARGS out of the hermes argv", async () => {
       const { projectDir, gradleFile, outputFolder } = buildProjectFixture("0.70.0");
       mockSpawnSyncToReactNative(projectDir);
 
@@ -391,9 +591,9 @@ describe("react-native-utils", () => {
         });
 
         const spawnArgs = mockedSpawn.mock.calls[0][1] as string[];
-        expect(spawnArgs).toContain("--max-old-space-size=4096");
-        expect(spawnArgs).toContain("--no-warnings");
-        expect(spawnArgs).toContain("-emit-binary");
+        expect(spawnArgs).not.toContain("--max-old-space-size=4096");
+        expect(spawnArgs).not.toContain("--no-warnings");
+        expect(spawnArgs.slice(0, 2)).toEqual(["-w", "-emit-binary"]);
       } finally {
         if (originalEnv === undefined) {
           delete process.env.CODE_PUSH_NODE_ARGS;
@@ -496,9 +696,239 @@ describe("react-native-utils", () => {
         await expect(pendingRun).rejects.toThrow(/Unable to find the Hermes compiler/);
         await expect(pendingRun).rejects.toThrow(/hermes-compiler/);
         await expect(pendingRun).rejects.toThrow(/sdks/);
+        await expect(pendingRun).rejects.toBeInstanceOf(rnUtils.HermesCompilerUnavailableError);
       });
 
       expect(mockedSpawn).not.toHaveBeenCalled();
+    });
+
+    it("still reports the missing compiler when the project has no Android gradle file", async () => {
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture("0.86.0", {
+        includeBundledHermes: false,
+        includeHermesCompilerPackage: false,
+      });
+      fs.rmSync(gradleFile);
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "main.jsbundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+
+      await withCwd(projectDir, async () => {
+        await expect(rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile)).rejects.toBeInstanceOf(
+          rnUtils.HermesCompilerUnavailableError
+        );
+      });
+    });
+
+    it("finds hermes-compiler through react-native's own dependencies when it is not at the project root", async () => {
+      const rnVersion = "0.88.1";
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture(rnVersion, { includeBundledHermes: false });
+      writeFile(
+        path.join(projectDir, "node_modules", "react-native", "package.json"),
+        JSON.stringify({ name: "react-native", version: rnVersion, dependencies: { "hermes-compiler": "260318099.0.5" } })
+      );
+      const nestedCompilerDir = path.join(projectDir, "node_modules", "react-native", "node_modules", "hermes-compiler");
+      writeFile(path.join(nestedCompilerDir, "package.json"), JSON.stringify({ name: "hermes-compiler", version: "260318099.0.5" }));
+      writeFile(path.join(nestedCompilerDir, "hermesc", hermesOsBin(), hermesOsExe(rnVersion)), "fake-hermes-compiler-bin");
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "main.jsbundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+      });
+
+      expect(mockedSpawn.mock.calls[0][0]).toBe(path.join(nestedCompilerDir, "hermesc", hermesOsBin(), hermesOsExe(rnVersion)));
+    });
+
+    it("ignores a hoisted hermes-compiler that this project's react-native does not depend on", async () => {
+      const workspaceDir = path.join(sandbox, "mixed-workspace-" + crypto.randomBytes(4).toString("hex"));
+      const otherAppsCompiler = path.join(workspaceDir, "node_modules", "hermes-compiler");
+      writeFile(path.join(otherAppsCompiler, "package.json"), JSON.stringify({ name: "hermes-compiler", version: "260318099.0.5" }));
+      writeFile(path.join(otherAppsCompiler, "hermesc", hermesOsBin(), hermesOsExe("0.88.1")), "other-app-compiler");
+
+      const appDir = path.join(workspaceDir, "packages", "legacy-app");
+      const rnVersion = "0.81.4";
+      writeFile(path.join(appDir, "package.json"), JSON.stringify({ name: "legacy-app", dependencies: { "react-native": rnVersion } }));
+      writeFile(path.join(appDir, "node_modules", "react-native", "package.json"), JSON.stringify({ name: "react-native", version: rnVersion }));
+      const bundledCompiler = path.join(appDir, "node_modules", "react-native", "sdks", "hermesc", hermesOsBin(), hermesOsExe(rnVersion));
+      writeFile(bundledCompiler, "own-compiler");
+      const gradleFile = path.join(appDir, "android", "app", "build.gradle");
+      writeFile(gradleFile, "android { }\n");
+      const outputFolder = path.join(appDir, "out");
+      mockSpawnSyncToReactNative(appDir);
+
+      const bundleName = "index.android.bundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(appDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+      });
+
+      expect(mockedSpawn.mock.calls[0][0]).toBe(bundledCompiler);
+    });
+
+    it("ignores a hermes-compiler at the project root when this project's react-native does not depend on it", async () => {
+      const rnVersion = "0.81.4";
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture(rnVersion, { includeHermesCompilerPackage: true });
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "index.android.bundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+      });
+
+      expect(mockedSpawn.mock.calls[0][0]).toBe(
+        path.join(projectDir, "node_modules", "react-native", "sdks", "hermesc", hermesOsBin(), hermesOsExe(rnVersion))
+      );
+    });
+
+    it("does not pass -w twice when --extraHermesFlags already carries it", async () => {
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture("0.81.4");
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "index.android.bundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", ["-w", "-O"], gradleFile);
+      });
+
+      const spawnArgs = mockedSpawn.mock.calls[0][1] as string[];
+      expect(spawnArgs.filter((arg) => arg === "-w")).toHaveLength(1);
+      expect(spawnArgs.slice(-2)).toEqual(["-w", "-O"]);
+    });
+
+    it("passes -w first so hermesc warnings stay out of the log, like the React Native Gradle task", async () => {
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture("0.81.4");
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "index.android.bundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", ["-O"], gradleFile);
+      });
+
+      expect(mockedSpawn.mock.calls[0][1]).toEqual([
+        "-w",
+        "-emit-binary",
+        "-out",
+        path.join(outputFolder, bundleName + ".hbc"),
+        path.join(outputFolder, bundleName),
+        "-O",
+      ]);
+    });
+
+    it("resolves the compiler when package.json declares react-native with a range semver cannot coerce", async () => {
+      const rnVersion = "0.88.1";
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture(rnVersion, {
+        includeBundledHermes: false,
+        includeHermesCompilerPackage: true,
+      });
+      writeFile(path.join(projectDir, "package.json"), JSON.stringify({ name: "test-app", dependencies: { "react-native": "catalog:" } }));
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "main.jsbundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+      writeFile(path.join(outputFolder, bundleName + ".hbc"), "compiled-bytecode");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => proc.emit("close", 0, null));
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        await rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+      });
+
+      expect(mockedSpawn.mock.calls[0][0]).toBe(
+        path.join(projectDir, "node_modules", "hermes-compiler", "hermesc", hermesOsBin(), hermesOsExe(rnVersion))
+      );
+    });
+
+    it("rejects with HermesCompilerUnavailableError and keeps the JS bundle when the compiler cannot be spawned", async () => {
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture("0.81.4");
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "index.android.bundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        const proc = createFakeChildProcess();
+        setImmediate(() => {
+          proc.emit("error", Object.assign(new Error("spawn ENOEXEC"), { code: "ENOEXEC" }));
+          proc.emit("close", -8, null);
+        });
+        return proc;
+      });
+
+      await withCwd(projectDir, async () => {
+        const pendingRun = rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+        await expect(pendingRun).rejects.toBeInstanceOf(rnUtils.HermesCompilerUnavailableError);
+        await expect(pendingRun).rejects.toThrow(/ENOEXEC/);
+      });
+
+      expect(fs.readFileSync(path.join(outputFolder, bundleName), "utf8")).toBe("original-bundle");
+    });
+
+    it("rejects with HermesCompilerUnavailableError when spawn throws synchronously", async () => {
+      const { projectDir, gradleFile, outputFolder } = buildProjectFixture("0.81.4");
+      mockSpawnSyncToReactNative(projectDir);
+
+      const bundleName = "index.android.bundle";
+      writeFile(path.join(outputFolder, bundleName), "original-bundle");
+
+      mockedSpawn.mockImplementationOnce(() => {
+        throw Object.assign(new Error("spawn ENOEXEC"), { code: "ENOEXEC" });
+      });
+
+      await withCwd(projectDir, async () => {
+        const pendingRun = rnUtils.runHermesEmitBinaryCommand(bundleName, outputFolder, "", [], gradleFile);
+        await expect(pendingRun).rejects.toBeInstanceOf(rnUtils.HermesCompilerUnavailableError);
+        await expect(pendingRun).rejects.toThrow(/Unable to run the Hermes compiler at .*\(ENOEXEC\)/);
+      });
+
+      expect(fs.readFileSync(path.join(outputFolder, bundleName), "utf8")).toBe("original-bundle");
     });
 
     it("routes hermes progress to stderr and keeps stdout clean when json is true", async () => {

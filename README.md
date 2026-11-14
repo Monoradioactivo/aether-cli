@@ -76,16 +76,25 @@ Full reference and flags: `aether <command> --help`, or the [CLI reference](http
 
 ## Hermes
 
-`release-react` compiles the bundle to Hermes bytecode when the project has Hermes enabled, or when you pass `-h` / `--useHermes`. For that step the CLI runs the `hermesc` compiler from the project's own `node_modules`, checking these locations in order and using the first one that exists:
+`release-react` compiles the bundle to Hermes bytecode when the project has Hermes enabled, and prints which file decided. It reads:
 
-1. `node_modules/hermes-compiler` (React Native 0.84 and newer)
-2. `node_modules/react-native/sdks/hermesc` (React Native 0.69 to 0.83)
+- Android: `hermesEnabled` (or `react.hermesEnabled`) in `android/app/gradle.properties`, then `android/gradle.properties`. `false` turns compilation off, and so does an `enableHermesOnlyInVariants` setting in `build.gradle`. Without the property, the older `enableHermes: true` in `project.ext.react` still turns it on.
+- iOS: `ios/Podfile.lock`. A `React-jsc` pod turns compilation off. Otherwise a `hermes-engine` pod, or the older `hermes_enabled => true` in the Podfile, turns it on. Commit `Podfile.lock` so CI sees the same pods your app was built with.
+
+Pass `-h` / `--useHermes` to compile without checking the project, or `--useHermes false` to release plain JavaScript whatever the project says. Use `--useHermes false` when your build overrides these settings outside the project files, for example `-PhermesEnabled=false` or `USE_THIRD_PARTY_JSC=1` at `pod install`. Use it too when the target binary range still includes builds that ran JavaScriptCore: bytecode only loads on the Hermes version it was compiled for, while plain JavaScript loads everywhere.
+
+With `-s` / `--sourcemapOutput`, a Hermes release writes the map composed from Metro's map and the compiler's. That is the map that symbolicates bytecode stack traces.
+
+For the compile step the CLI runs the `hermesc` compiler from the project's own dependencies, checking these locations in order and using the first one that exists:
+
+1. the `hermes-compiler` package, as `react-native` resolves it and then at the project root, only when the installed `react-native` depends on it (React Native 0.83 and newer)
+2. `node_modules/react-native/sdks/hermesc` (React Native 0.69 to 0.82)
 3. the `hermesCommand` path from `android/app/build.gradle`, if set
 4. `node_modules/hermes-engine` or `node_modules/hermesvm` (older projects)
 
-If no compiler is found, the command fails and prints the paths it tried.
+When Hermes was detected but no compiler is found or it cannot run on this machine, the command prints the reason and releases plain JavaScript, which every Hermes app can load. With `--useHermes` the same cases fail, printing the paths it tried or the compiler that could not start.
 
-Known limitation: on Windows, some versions of the `hermes-compiler` package ship without a `win64-bin` binary. If a Hermes release fails on Windows with that path list, run it from macOS or Linux (for example in CI) instead.
+Known limitation: the Linux `hermesc` binaries are x86-64 only, and on Windows some versions of the `hermes-compiler` package ship without a `win64-bin` binary. On those machines a detected Hermes project releases plain JavaScript; run the release from macOS or x86-64 Linux to get bytecode.
 
 ## Signing in
 

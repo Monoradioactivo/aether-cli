@@ -805,7 +805,7 @@ describe("command-parser", () => {
       expect(cmd.development).toBe(false);
       expect(cmd.disabled).toBe(false);
       expect(cmd.mandatory).toBe(false);
-      expect(cmd.useHermes).toBe(false);
+      expect(cmd.useHermes).toBeUndefined();
       expect(cmd.rollout).toBe(100);
       expect(cmd.description).toBe("");
       expect(cmd.bundleName).toBe(null);
@@ -825,6 +825,20 @@ describe("command-parser", () => {
       expect(cmd.useHermes).toBe(true);
       expect(cmd.platform).toBe("android");
     });
+
+    it.each([["--useHermes=true"], ["-h"]])("'release-react ios %s' sets useHermes=true", (flag) => {
+      const cmd = parseArgs(["release-react", "MyApp", "ios", flag]);
+      expect(cmd.useHermes).toBe(true);
+    });
+
+    it.each([[["--useHermes", "false"]], [["--useHermes=false"]], [["--no-useHermes"]]])(
+      "'release-react ios %j' sets useHermes=false, the explicit opt-out",
+      (flags) => {
+        const cmd = parseArgs(["release-react", "MyApp", "ios", ...flags]);
+        expect(cmd.useHermes).toBe(false);
+        expect(cmd.platform).toBe("ios");
+      }
+    );
 
     it("'release-react' threads many options through correctly", () => {
       const cmd = parseArgs([

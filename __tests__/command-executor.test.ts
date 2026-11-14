@@ -2077,6 +2077,123 @@ describe("command-executor", () => {
         fs.rmSync(cwd, { recursive: true, force: true });
       }
     });
+
+    describe("Hermes decision", () => {
+      const rnUtils = require("../script/react-native-utils");
+      let cwd: string;
+      let previousCwd: string;
+      let hermesSpy: jest.SpyInstance;
+
+      function releaseReactCommand(overrides: Partial<cli.IReleaseReactCommand> = {}): cli.IReleaseReactCommand {
+        return {
+          type: cli.CommandType.releaseReact,
+          appName: "MyApp",
+          deploymentName: "Production",
+          platform: "android",
+          appStoreVersion: "1.0.0",
+          privateKeyPath: null,
+          outputDir: path.join(cwd, "CodePush"),
+          description: "first release",
+          disabled: false,
+          mandatory: false,
+          rollout: 100,
+          noDuplicateReleaseError: false,
+          ...overrides,
+        } as cli.IReleaseReactCommand;
+      }
+
+      function loggedMessages(): string[] {
+        return [...consoleLogSpy.mock.calls, ...consoleErrorSpy.mock.calls].map((c) => String(c[0]));
+      }
+
+      beforeEach(() => {
+        cwd = fs.mkdtempSync(path.join(os.tmpdir(), "aether-rr-hermes-"));
+        previousCwd = process.cwd();
+        writeReactNativeCwd(cwd);
+        fs.writeFileSync(path.join(cwd, "android", "app", "build.gradle"), "android { }\n");
+        fs.writeFileSync(path.join(cwd, "android", "gradle.properties"), "hermesEnabled=true\n");
+        process.chdir(cwd);
+        mockBundleSpawn();
+        mockSdkMethods.getDeployment.mockResolvedValue({ name: "Production" });
+        mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+        mockSdkMethods.release.mockResolvedValue(pkg);
+        hermesSpy = jest.spyOn(rnUtils, "runHermesEmitBinaryCommand").mockResolvedValue(undefined);
+      });
+
+      afterEach(() => {
+        hermesSpy.mockRestore();
+        process.chdir(previousCwd);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      });
+
+      it("compiles when gradle.properties sets hermesEnabled=true and --useHermes is not passed", async () => {
+        await executor.releaseReact(releaseReactCommand());
+
+        expect(hermesSpy).toHaveBeenCalledTimes(1);
+        const messages = loggedMessages();
+        expect(messages.some((m) => m.includes("Hermes is on for this project: hermesEnabled=true in android/gradle.properties"))).toBe(
+          true
+        );
+        expect(messages.some((m) => m.includes("Running hermes compiler..."))).toBe(true);
+        expect(mockSdkMethods.release).toHaveBeenCalledTimes(1);
+      });
+
+      it("skips detection and compilation for --useHermes false, even with no project files to read", async () => {
+        fs.rmSync(path.join(cwd, "android"), { recursive: true, force: true });
+
+        await executor.releaseReact(releaseReactCommand({ useHermes: false }));
+
+        expect(hermesSpy).not.toHaveBeenCalled();
+        const messages = loggedMessages();
+        expect(messages.some((m) => m.includes("Hermes compilation skipped: --useHermes false."))).toBe(true);
+        expect(messages.some((m) => m.includes("Running hermes compiler..."))).toBe(false);
+        expect(mockSdkMethods.release).toHaveBeenCalledTimes(1);
+      });
+
+      it("releases plain JavaScript with a warning when auto-detected Hermes has no runnable compiler", async () => {
+        hermesSpy.mockRejectedValue(new rnUtils.HermesCompilerUnavailableError("Unable to find the Hermes compiler."));
+
+        await executor.releaseReact(releaseReactCommand());
+
+        expect(hermesSpy).toHaveBeenCalledTimes(1);
+        expect(loggedMessages().some((m) => m.includes("Releasing plain JavaScript instead."))).toBe(true);
+        expect(mockSdkMethods.release).toHaveBeenCalledTimes(1);
+      });
+
+      it("fails when --useHermes forces compilation and no compiler can run", async () => {
+        hermesSpy.mockRejectedValue(new rnUtils.HermesCompilerUnavailableError("Unable to find the Hermes compiler."));
+
+        await expect(executor.releaseReact(releaseReactCommand({ useHermes: true }))).rejects.toThrow(/Unable to find the Hermes compiler/);
+        expect(loggedMessages().some((m) => m.includes("Hermes compilation forced by --useHermes."))).toBe(true);
+        expect(mockSdkMethods.release).not.toHaveBeenCalled();
+      });
+
+      it("fails when the detected compiler runs and exits with an error", async () => {
+        hermesSpy.mockRejectedValue(new Error('"hermes" command failed (exitCode=1, signal=null).'));
+
+        await expect(executor.releaseReact(releaseReactCommand())).rejects.toThrow(/"hermes" command failed/);
+        expect(mockSdkMethods.release).not.toHaveBeenCalled();
+      });
+
+      it("releases plain JavaScript and says why when gradle.properties sets hermesEnabled=false", async () => {
+        fs.writeFileSync(path.join(cwd, "android", "gradle.properties"), "hermesEnabled=false\n");
+
+        await executor.releaseReact(releaseReactCommand());
+
+        expect(hermesSpy).not.toHaveBeenCalled();
+        expect(loggedMessages().some((m) => m.includes("Hermes is off for this project: hermesEnabled=false"))).toBe(true);
+        expect(mockSdkMethods.release).toHaveBeenCalledTimes(1);
+      });
+
+      it("keeps the decision line off stdout under --json", async () => {
+        await executor.releaseReact(releaseReactCommand({ json: true }));
+
+        const stdoutMessages = consoleLogSpy.mock.calls.map((c) => String(c[0]));
+        expect(stdoutMessages).toHaveLength(1);
+        expect(JSON.parse(stdoutMessages[0]).label).toBe("v3");
+        expect(consoleErrorSpy.mock.calls.map((c) => String(c[0])).some((m) => m.includes("Hermes is on for this project"))).toBe(true);
+      });
+    });
   });
 
   describe("session / whoami", () => {

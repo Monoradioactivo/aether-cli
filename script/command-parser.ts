@@ -1057,9 +1057,9 @@ yargs
       })
       .option("useHermes", {
         alias: "h",
-        default: false,
         demand: false,
-        description: "Enable hermes and bypass automatic checks",
+        description:
+          "Compile to Hermes bytecode without checking the project. Pass --useHermes false to release plain JavaScript even when Hermes is detected",
         type: "boolean",
       })
       .option("podFile", {
