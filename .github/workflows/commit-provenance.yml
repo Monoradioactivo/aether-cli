@@ -92,4 +92,27 @@ jobs:
           if [ "$JUDGE_OUTCOME" = "success" ]; then
             conclusion=success
           fi
-          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_ID}" -f status='completed' -f conclusion="$conclusion"
+          attempt=1
+          while true; do
+            if output=$(gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_ID}" -f status='completed' -f conclusion="$conclusion" 2>&1); then
+              exit 0
+            fi
+            printf '%s\n' "$output"
+            http_status=none
+            if [[ "$output" =~ HTTP\ ([0-9]{3}) ]]; then
+              http_status=${BASH_REMATCH[1]}
+            fi
+            retryable=no
+            case "$http_status" in
+              404|429|5??|none) retryable=yes ;;
+            esac
+            if [[ "$output" =~ [Rr]ate\ [Ll]imit ]]; then
+              retryable=yes
+            fi
+            if [ "$retryable" = no ] || [ "$attempt" -ge 5 ]; then
+              echo "::error::check run ${CHECK_ID} was not completed as ${conclusion} after ${attempt} attempt(s), last HTTP status ${http_status}"
+              exit 1
+            fi
+            sleep $((2 ** attempt))
+            attempt=$((attempt + 1))
+          done

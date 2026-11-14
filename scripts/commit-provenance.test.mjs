@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   classifyCommit,
@@ -1017,4 +1020,125 @@ test("standing vouches read pull_request_target runs only", () => {
   const source = readFileSync(new URL("./check-commit-provenance.mjs", import.meta.url), "utf8");
   assert.match(source, /event=pull_request_target&/);
   assert.doesNotMatch(source, /event=pull_request&/);
+});
+
+const FINISH_CHECK_ID = "132342852104";
+const FINISH_PATCH = `api --method PATCH repos/owner/repo/check-runs/${FINISH_CHECK_ID} -f status=completed -f conclusion=`;
+const NOT_FOUND = "gh: Not Found (HTTP 404)";
+
+const GH_STUB = `#!/bin/sh
+printf '%s\\n' "$*" >> "$STUB_DIR/calls"
+call=$(grep -c '' "$STUB_DIR/calls")
+response=$(sed -n "\${call}p" "$STUB_DIR/responses")
+if [ "$response" = ok ]; then
+  printf '{"id":1}\\n'
+  exit 0
+fi
+printf '%s\\n' "$response" >&2
+exit 1
+`;
+
+const SLEEP_STUB = `#!/bin/sh
+printf '%s\\n' "$1" >> "$STUB_DIR/sleeps"
+`;
+
+function finishStepScript() {
+  const lines = readWorkflow().split("\n");
+  const step = lines.indexOf("      - name: Finish the head check");
+  assert.notEqual(step, -1, "the workflow has a Finish the head check step");
+  const run = lines.findIndex((line, index) => index > step && line === "        run: |");
+  assert.notEqual(run, -1, "the Finish the head check step runs a block script");
+  const body = [];
+  for (const line of lines.slice(run + 1)) {
+    if (line.trim() !== "" && !line.startsWith("          ")) break;
+    body.push(line.slice(10));
+  }
+  return body.join("\n");
+}
+
+function linesOf(path) {
+  try {
+    return readFileSync(path, "utf8").split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function runFinishStep({ judgeOutcome = "success", responses }) {
+  const dir = mkdtempSync(join(tmpdir(), "finish-head-check-"));
+  try {
+    writeFileSync(join(dir, "responses"), `${responses.join("\n")}\n`);
+    writeFileSync(join(dir, "gh"), GH_STUB, { mode: 0o755 });
+    writeFileSync(join(dir, "sleep"), SLEEP_STUB, { mode: 0o755 });
+    const result = spawnSync("bash", ["-e", "-c", finishStepScript()], {
+      encoding: "utf8",
+      env: {
+        PATH: `${dir}:${process.env.PATH}`,
+        STUB_DIR: dir,
+        GITHUB_REPOSITORY: "owner/repo",
+        CHECK_ID: FINISH_CHECK_ID,
+        JUDGE_OUTCOME: judgeOutcome,
+      },
+    });
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      calls: linesOf(join(dir, "calls")),
+      sleeps: linesOf(join(dir, "sleeps")),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("the finish step retries a 404 from the check run update until it completes the check", () => {
+  const run = runFinishStep({ responses: [NOT_FOUND, NOT_FOUND, "ok"] });
+  assert.equal(run.status, 0, run.stdout);
+  assert.deepEqual(run.calls, Array(3).fill(`${FINISH_PATCH}success`));
+  assert.deepEqual(run.sleeps, ["2", "4"]);
+});
+
+test("the finish step retries 5xx, 429, rate limit and network failures", () => {
+  const run = runFinishStep({
+    responses: [
+      "gh: HTTP 502: Bad Gateway (https://api.github.com/repos/owner/repo/check-runs/1)",
+      "gh: Too Many Requests (HTTP 429)",
+      "gh: You have exceeded a secondary rate limit (HTTP 403)",
+      "error connecting to api.github.com",
+      "ok",
+    ],
+  });
+  assert.equal(run.status, 0, run.stdout);
+  assert.equal(run.calls.length, 5);
+  assert.deepEqual(run.sleeps, ["2", "4", "8", "16"]);
+});
+
+test("the finish step fails at once on a refusal that is not transient and names the check and the status", () => {
+  const run = runFinishStep({ responses: ["gh: Resource not accessible by integration (HTTP 403)"] });
+  assert.equal(run.status, 1);
+  assert.equal(run.calls.length, 1);
+  assert.deepEqual(run.sleeps, []);
+  assert.match(
+    run.stdout,
+    new RegExp(`::error::check run ${FINISH_CHECK_ID} was not completed as success after 1 attempt\\(s\\), last HTTP status 403`),
+  );
+});
+
+test("the finish step gives up after five attempts and names the check and the status", () => {
+  const run = runFinishStep({ responses: Array(5).fill(NOT_FOUND) });
+  assert.equal(run.status, 1);
+  assert.equal(run.calls.length, 5);
+  assert.deepEqual(run.sleeps, ["2", "4", "8", "16"]);
+  assert.match(
+    run.stdout,
+    new RegExp(`::error::check run ${FINISH_CHECK_ID} was not completed as success after 5 attempt\\(s\\), last HTTP status 404`),
+  );
+});
+
+test("the finish step completes the check as failure for every judge outcome but success", () => {
+  for (const judgeOutcome of ["failure", "cancelled", "skipped", ""]) {
+    const run = runFinishStep({ judgeOutcome, responses: [NOT_FOUND, "ok"] });
+    assert.equal(run.status, 0, run.stdout);
+    assert.deepEqual(run.calls, Array(2).fill(`${FINISH_PATCH}failure`), `judge outcome "${judgeOutcome}"`);
+  }
 });
