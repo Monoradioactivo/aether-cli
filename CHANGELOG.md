@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.5...v0.10.0) (2026-11-14)
+
+
+### Features
+
+* **cli:** detect Hermes on current React Native templates in release-react ([#193](https://github.com/Monoradioactivo/aether-cli/issues/193)) ([62bd748](https://github.com/Monoradioactivo/aether-cli/commit/62bd74813eb7298ff9b6a089ea19678695e2d46f))
+
 ## [0.9.5](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.4...v0.9.5) (2026-10-06)
 
 
