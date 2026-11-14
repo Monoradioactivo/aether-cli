@@ -48,7 +48,14 @@ import {
   Session,
   UpdateMetrics,
 } from "../script/types";
-import { getAndroidHermesEnabled, getiOSHermesEnabled, runHermesEmitBinaryCommand, isValidVersion } from "./react-native-utils";
+import {
+  getAndroidHermesEnabled,
+  getiOSHermesEnabled,
+  HermesCompilerUnavailableError,
+  HermesDetection,
+  runHermesEmitBinaryCommand,
+  isValidVersion,
+} from "./react-native-utils";
 import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./utils/file-utils";
 import { enrichDescriptionWithCiMetadata } from "./utils/ci-metadata";
 import { formatReleaseJson } from "./utils/release-json";
@@ -1823,14 +1830,27 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
     .catch((err: AetherError) => releaseErrorHandler(err, command));
 };
 
+interface HermesDecision extends HermesDetection {
+  forced: boolean;
+}
+
+async function decideHermesCompilation(command: cli.IReleaseReactCommand, platform: string): Promise<HermesDecision> {
+  if (command.useHermes === true) {
+    return { enabled: true, forced: true, reason: "Hermes compilation forced by --useHermes." };
+  }
+  if (command.useHermes === false) {
+    return { enabled: false, forced: false, reason: "Hermes compilation skipped: --useHermes false." };
+  }
+  const detection = platform === "android" ? await getAndroidHermesEnabled(command.gradleFile) : getiOSHermesEnabled(command.podFile);
+  return { ...detection, forced: false };
+}
+
 export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> => {
   let bundleName: string = command.bundleName;
   let entryFile: string = command.entryFile;
   const outputFolder: string = command.outputDir || path.join(os.tmpdir(), "CodePush");
   const platform: string = (command.platform = command.platform.toLowerCase());
   const releaseCommand: cli.IReleaseCommand = <any>command;
-  // Check for app and deployment exist before releasing an update.
-  // This validation helps to save about 1 minute or more in case user has typed wrong app or deployment name.
   return (
     sdk
       .getDeployment(command.appName, command.deploymentName)
@@ -1898,8 +1918,6 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
 
         return createEmptyTempReleaseFolder(outputFolder);
       })
-      // This is needed to clear the react native bundler cache:
-      // https://github.com/facebook/react-native/issues/4289
       .then(() => deleteFolder(`${os.tmpdir()}/react-*`))
       .then(() =>
         runReactNativeBundleCommand(
@@ -1913,21 +1931,31 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         )
       )
       .then(async () => {
-        const isHermesEnabled =
-          command.useHermes ||
-          (platform === "android" && (await getAndroidHermesEnabled(command.gradleFile))) || // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in build.gradle and we're releasing an Android build
-          (platform === "ios" && (await getiOSHermesEnabled(command.podFile))); // Check if we have to run hermes to compile JS to Byte Code if Hermes is enabled in Podfile and we're releasing an iOS build
+        const hermes = await decideHermesCompilation(command, platform);
+        progressLog(command, chalk.cyan(`\n${hermes.reason}\n`));
 
-        if (isHermesEnabled) {
+        if (hermes.enabled) {
           progressLog(command, chalk.cyan("\nRunning hermes compiler...\n"));
-          await runHermesEmitBinaryCommand(
-            bundleName,
-            outputFolder,
-            command.sourcemapOutput,
-            command.extraHermesFlags,
-            command.gradleFile,
-            command.json
-          );
+          try {
+            await runHermesEmitBinaryCommand(
+              bundleName,
+              outputFolder,
+              command.sourcemapOutput,
+              command.extraHermesFlags,
+              command.gradleFile,
+              command.json
+            );
+          } catch (error) {
+            if (hermes.forced || !(error instanceof HermesCompilerUnavailableError)) {
+              throw error;
+            }
+            progressLog(
+              command,
+              chalk.yellow(
+                `\n${error.message}\nReleasing plain JavaScript instead. Pass --useHermes to make a missing compiler an error, or --useHermes false to skip Hermes.\n`
+              )
+            );
+          }
         }
       })
       .then(async () => {
