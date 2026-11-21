@@ -66,6 +66,13 @@ function errorOutput(): string {
     .join("\n");
 }
 
+function consoleOutput(): string {
+  return [...(console.log as jest.Mock).mock.calls, ...(console.error as jest.Mock).mock.calls]
+    .flat()
+    .map((value) => String(value))
+    .join("\n");
+}
+
 describe("cli entry point", () => {
   beforeEach(() => {
     jest.spyOn(console, "log").mockImplementation(() => undefined);
@@ -137,6 +144,21 @@ describe("cli entry point", () => {
       const { exitCode, executeCalled } = runCli(["app", "list"]);
       expect(exitCode).toBeNull();
       expect(executeCalled).toBe(true);
+    });
+  });
+
+  describe("release-react help", () => {
+    it("releases each platform to its own app in the examples", () => {
+      const { exitCode, executeCalled } = runCli(["release-react", "--help"]);
+      expect(exitCode).toBe(0);
+      expect(executeCalled).toBe(false);
+
+      const help = consoleOutput();
+      expect(help).toContain("release-react MyApp-iOS ios");
+      expect(help).toContain('to the "MyApp-iOS" app\'s "Staging" deployment');
+      expect(help).toContain("release-react MyApp-Android android -d Production");
+      expect(help).toContain('to the "MyApp-Android" app\'s "Production" deployment');
+      expect(help).not.toMatch(/release-react MyApp (ios|android)/);
     });
   });
 });
