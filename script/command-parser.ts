@@ -941,12 +941,12 @@ yargs
       .usage(USAGE_PREFIX + " release-react <appName> <platform> [options]")
       .demand(/*count*/ 2, /*max*/ 2) // Require exactly two non-option arguments
       .example(
-        "release-react MyApp ios",
-        'Releases the React Native iOS project in the current working directory to the "MyApp" app\'s "Staging" deployment'
+        "release-react MyApp-iOS ios",
+        'Releases the React Native iOS project in the current working directory to the "MyApp-iOS" app\'s "Staging" deployment'
       )
       .example(
-        "release-react MyApp android -d Production",
-        'Releases the React Native Android project in the current working directory to the "MyApp" app\'s "Production" deployment'
+        "release-react MyApp-Android android -d Production",
+        'Releases the React Native Android project in the current working directory to the "MyApp-Android" app\'s "Production" deployment'
       )
       .option("bundleName", {
         alias: "b",
