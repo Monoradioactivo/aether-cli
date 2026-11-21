@@ -2194,6 +2194,111 @@ describe("command-executor", () => {
         expect(consoleErrorSpy.mock.calls.map((c) => String(c[0])).some((m) => m.includes("Hermes is on for this project"))).toBe(true);
       });
     });
+
+    describe("platform named by the app", () => {
+      let cwd: string;
+      let previousCwd: string;
+      const beforeStart = "Warning: the app name";
+      const afterStart = "Warning: this iOS bundle went to";
+
+      function releaseReactCommand(overrides: Partial<cli.IReleaseReactCommand> = {}): cli.IReleaseReactCommand {
+        return {
+          type: cli.CommandType.releaseReact,
+          appName: "MyApp-Android",
+          deploymentName: "Production",
+          platform: "android",
+          appStoreVersion: "1.0.0",
+          privateKeyPath: null,
+          outputDir: path.join(cwd, "CodePush"),
+          description: "first release",
+          disabled: false,
+          mandatory: false,
+          rollout: 100,
+          noDuplicateReleaseError: false,
+          useHermes: false,
+          ...overrides,
+        } as cli.IReleaseReactCommand;
+      }
+
+      function loggedMessages(): string[] {
+        return [...consoleLogSpy.mock.calls, ...consoleErrorSpy.mock.calls].map((c) => String(c[0]));
+      }
+
+      beforeEach(() => {
+        cwd = fs.mkdtempSync(path.join(os.tmpdir(), "aether-rr-platform-"));
+        previousCwd = process.cwd();
+        writeReactNativeCwd(cwd);
+        fs.writeFileSync(path.join(cwd, "index.js"), "console.log('test');");
+        process.chdir(cwd);
+        mockBundleSpawn();
+        mockSdkMethods.getDeployment.mockResolvedValue({ name: "Production" });
+        mockSdkMethods.isAuthenticated.mockResolvedValue(true);
+        mockSdkMethods.release.mockResolvedValue(pkg);
+      });
+
+      afterEach(() => {
+        process.chdir(previousCwd);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      });
+
+      it("warns before bundling and again after the release when the app name names the other platform", async () => {
+        await executor.releaseReact(releaseReactCommand({ platform: "ios" }));
+
+        const messages = loggedMessages();
+        const beforeIndex = messages.findIndex((m) => m.includes(beforeStart));
+        const afterIndex = messages.findIndex((m) => m.includes(afterStart));
+        expect(messages[beforeIndex]).toContain('the app name "MyApp-Android" names Android, but this release is bundled for iOS.');
+        expect(beforeIndex).toBeGreaterThanOrEqual(0);
+        expect(beforeIndex).toBeLessThan(messages.findIndex((m) => m.includes('Running "react-native bundle" command')));
+        expect(messages[afterIndex]).toContain('`aether patch "MyApp-Android" "Production" --label v3 -x`');
+        expect(afterIndex).toBeGreaterThan(messages.findIndex((m) => m.includes("Successfully released")));
+        expect(spawn).toHaveBeenCalledWith("node", expect.arrayContaining(["--platform", "ios"]));
+        expect(mockSdkMethods.release).toHaveBeenCalledTimes(1);
+      });
+
+      it("prints no warning when the app name names the release platform", async () => {
+        await executor.releaseReact(releaseReactCommand({ platform: "android" }));
+
+        expect(loggedMessages().some((m) => m.includes("Warning:"))).toBe(false);
+        expect(mockSdkMethods.release).toHaveBeenCalledTimes(1);
+      });
+
+      it("prints no warning when the app name names no platform, as on an app's first release", async () => {
+        await executor.releaseReact(releaseReactCommand({ appName: "MyApp", platform: "ios" }));
+
+        expect(loggedMessages().some((m) => m.includes("Warning:"))).toBe(false);
+        expect(mockSdkMethods.release).toHaveBeenCalledTimes(1);
+      });
+
+      it("prints no after-release warning when the release fails", async () => {
+        mockSdkMethods.release.mockRejectedValue(new Error("upload refused"));
+
+        await expect(executor.releaseReact(releaseReactCommand({ platform: "ios" }))).rejects.toThrow("upload refused");
+        expect(loggedMessages().some((m) => m.includes(beforeStart))).toBe(true);
+        expect(loggedMessages().some((m) => m.includes(afterStart))).toBe(false);
+      });
+
+      it("prints no after-release warning when --noDuplicateReleaseError swallows a duplicate and nothing is released", async () => {
+        mockSdkMethods.release.mockRejectedValue(new AetherError("Duplicate release.", 409, "req_dup", "duplicate_release"));
+
+        await executor.releaseReact(releaseReactCommand({ platform: "ios", noDuplicateReleaseError: true }));
+
+        expect(loggedMessages().some((m) => m.includes(beforeStart))).toBe(true);
+        expect(loggedMessages().some((m) => m.includes(afterStart))).toBe(false);
+        expect(consoleWarnSpy.mock.calls.map((c) => String(c[0])).some((m) => m.includes("Duplicate release."))).toBe(true);
+      });
+
+      it("keeps both warnings off stdout under --json", async () => {
+        await executor.releaseReact(releaseReactCommand({ platform: "ios", json: true }));
+
+        const stdoutMessages = consoleLogSpy.mock.calls.map((c) => String(c[0]));
+        expect(stdoutMessages).toHaveLength(1);
+        expect(JSON.parse(stdoutMessages[0]).label).toBe("v3");
+        const stderrMessages = consoleErrorSpy.mock.calls.map((c) => String(c[0]));
+        expect(stderrMessages.some((m) => m.includes(beforeStart))).toBe(true);
+        expect(stderrMessages.some((m) => m.includes(afterStart))).toBe(true);
+      });
+    });
   });
 
   describe("session / whoami", () => {

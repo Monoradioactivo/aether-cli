@@ -58,6 +58,7 @@ import {
 } from "./react-native-utils";
 import { fileDoesNotExistOrIsDirectory, isBinaryOrZip, fileExists } from "./utils/file-utils";
 import { enrichDescriptionWithCiMetadata } from "./utils/ci-metadata";
+import { platformMismatchWarnings, PlatformMismatchWarnings } from "./utils/app-name-platform";
 import { formatReleaseJson } from "./utils/release-json";
 import * as keyStore from "./auth/key-store";
 import { generateDeviceId } from "./auth/pkce";
@@ -1776,7 +1777,7 @@ export function throwForInvalidSignedReleaseFolder(updateContentsPath: string, i
   }
 }
 
-export const release = (command: cli.IReleaseCommand): Promise<void> => {
+export const release = (command: cli.IReleaseCommand): Promise<Package | void> => {
   if (isBinaryOrZip(command.package)) {
     throw new Error(
       "It is unnecessary to package releases in a .zip or binary file. Please specify the direct path to the update content's directory (e.g. /platforms/ios/www) or file (e.g. main.jsbundle)."
@@ -1810,7 +1811,7 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
       progressLog(command, "Uploading release package...");
       return sdk.release(command.appName, command.deploymentName, filePath, command.appStoreVersion, updateMetadata);
     })
-    .then((pkg: Package): void => {
+    .then((pkg: Package): Package => {
       progressLog(
         command,
         'Successfully released an update containing the "' +
@@ -1826,6 +1827,7 @@ export const release = (command: cli.IReleaseCommand): Promise<void> => {
       if (command.json) {
         console.log(formatReleaseJson(pkg));
       }
+      return pkg;
     })
     .catch((err: AetherError) => releaseErrorHandler(err, command));
 };
@@ -1851,6 +1853,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
   const outputFolder: string = command.outputDir || path.join(os.tmpdir(), "CodePush");
   const platform: string = (command.platform = command.platform.toLowerCase());
   const releaseCommand: cli.IReleaseCommand = <any>command;
+  let platformWarnings: PlatformMismatchWarnings | null = null;
   return (
     sdk
       .getDeployment(command.appName, command.deploymentName)
@@ -1867,6 +1870,11 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
             break;
           default:
             throw new Error('Platform must be either "android" or "ios".');
+        }
+
+        platformWarnings = platformMismatchWarnings(command.appName, command.deploymentName, platform);
+        if (platformWarnings) {
+          progressLog(command, chalk.yellow(`\n${platformWarnings.beforeRelease}\n`));
         }
 
         let projectName: string;
@@ -1971,7 +1979,10 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         progressLog(command, chalk.cyan("\nReleasing update contents to Aether:\n"));
         return release({ ...releaseCommand, privateKeyPath: undefined });
       })
-      .then(() => {
+      .then((released: Package | void) => {
+        if (platformWarnings && released && released.label) {
+          progressLog(command, chalk.yellow(`\n${platformWarnings.afterRelease(released.label)}\n`));
+        }
         if (!command.outputDir) {
           deleteFolder(outputFolder);
         }
