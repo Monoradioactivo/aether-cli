@@ -31,26 +31,28 @@ Requires Node.js 22 or later.
    aether login
    ```
 
-2. Create an app. This also creates its Staging and Production deployments. Print the deployment keys and wire one into your app binary.
+2. Create one app per platform, for example `MyApp-iOS` and `MyApp-Android`. Each app gets its own Staging and Production deployments. Print the deployment keys and wire each platform's keys into that platform's binary.
 
    ```sh
-   aether app add my-react-native-app
-   aether deployment ls my-react-native-app -k
+   aether app add MyApp-iOS
+   aether deployment ls MyApp-iOS -k
    ```
 
 3. Release an update. The command bundles the app and reads the target binary version from the project.
 
    ```sh
-   aether release-react my-react-native-app ios
+   aether release-react MyApp-iOS ios
    ```
 
 4. Manage the release: widen a rollout, promote it, or roll it back.
 
    ```sh
-   aether patch my-react-native-app Staging -r 25
-   aether promote my-react-native-app Staging Production
-   aether rollback my-react-native-app Production
+   aether patch MyApp-iOS Staging -r 25
+   aether promote MyApp-iOS Staging Production
+   aether rollback MyApp-iOS Production
    ```
+
+   Do the same with `MyApp-Android` and `android` for the Android build.
 
 ## Commands
 
@@ -73,6 +75,12 @@ Requires Node.js 22 or later.
 | `debug ios\|android` | Stream Aether logs from a running app |
 
 Full reference and flags: `aether <command> --help`, or the [CLI reference](https://docs.aetherpush.com/cli/) in the docs.
+
+## Platform check
+
+The server does not filter updates by platform, so an iOS bundle released to an Android app is offered to Android devices whose binary version it targets. `release-react` warns when the app name names one platform and the `<platform>` argument is the other, `MyApp-Android` with `ios` or `MyApp-iOS` with `android`: once before it bundles, and again after the release with the command that disables that release by its label (`aether patch <appName> <deploymentName> --label <label> -x`). When `--noDuplicateReleaseError` skips a duplicate, nothing is released and the second warning does not print. The release still goes out and the exit code does not change; under `--json` both warnings go to stderr.
+
+A name counts as naming Android when it contains `android` in any case. It names iOS when it contains `ios` as its own word (`MyApp-iOS`, `myapp_ios`), `iOS` or `IOS` not right after a capital letter and not followed by a lowercase one (`MyAppiOS`, `iOSMyApp`, `MyApp-iOS17`), or `Ios` after a lowercase letter or digit (`MyAppIos`). A name that names neither platform, or both, gets no warning. `aether release` takes no platform argument and does no check.
 
 ## Hermes
 
