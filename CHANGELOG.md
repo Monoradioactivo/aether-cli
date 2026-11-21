@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.10.1...v0.11.0) (2026-11-21)
+
+
+### Features
+
+* **cli:** warn when release-react's platform disagrees with the app name ([#197](https://github.com/Monoradioactivo/aether-cli/issues/197)) ([5558327](https://github.com/Monoradioactivo/aether-cli/commit/5558327122a0891775eb81bd960803908a603d76))
+
 ## [0.10.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.10.0...v0.10.1) (2026-11-21)
 
 
