@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.10.0...v0.10.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cli:** release each platform to its own app in the release-react help examples ([#195](https://github.com/Monoradioactivo/aether-cli/issues/195)) ([2d2e7e8](https://github.com/Monoradioactivo/aether-cli/commit/2d2e7e8bd3a255257b1a4bdf60f681adb5bf3292))
+
 ## [0.10.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.9.5...v0.10.0) (2026-11-14)
 
 
