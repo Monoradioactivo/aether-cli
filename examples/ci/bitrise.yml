@@ -10,7 +10,7 @@ app:
   - AETHER_CLI_VERSION: "0.11.0" # x-release-please-version
     opts:
       is_expand: false
-  - AETHER_APP_NAME: "my-react-native-app"
+  - AETHER_APP_NAME: "MyApp-Android"
     opts:
       is_expand: false
   - AETHER_PLATFORM: "android"

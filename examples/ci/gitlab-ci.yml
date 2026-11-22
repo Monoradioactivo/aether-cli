@@ -3,7 +3,7 @@ stages:
 
 variables:
   AETHER_CLI_VERSION: "0.11.0" # x-release-please-version
-  AETHER_APP_NAME: "my-react-native-app"
+  AETHER_APP_NAME: "MyApp-Android"
   AETHER_PLATFORM: "android"
 
 .aether_release:
