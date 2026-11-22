@@ -16,7 +16,7 @@ jobs:
         default: "100%"
       app-name:
         type: string
-        default: "my-react-native-app"
+        default: "MyApp-Android"
       platform:
         type: string
         default: "android"
