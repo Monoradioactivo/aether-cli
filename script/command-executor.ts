@@ -63,8 +63,8 @@ import { formatReleaseJson } from "./utils/release-json";
 import * as keyStore from "./auth/key-store";
 import { generateDeviceId } from "./auth/pkce";
 import { runBrowserLogin } from "./auth/browser-login";
+import { DEFAULT_AETHER_SERVER_URL, resolveServerUrl } from "./server-url";
 
-const DEFAULT_AETHER_SERVER_URL = "https://api.aetherpush.com";
 const emailValidator = require("email-validator");
 const packageJson = require("../../package.json");
 const properties = require("properties");
@@ -2320,15 +2320,6 @@ function whoami(_command: cli.ICommand): Promise<void> {
 
 function isCommandOptionSpecified(option: any): boolean {
   return option !== undefined && option !== null;
-}
-
-/**
- * Only an explicit --serverUrl is persisted, so an absent one means the default
- * rather than nothing. Falling through to the SDK's own default would point the
- * CLI at localhost.
- */
-function resolveServerUrl(storedServerUrl?: string): string {
-  return storedServerUrl || DEFAULT_AETHER_SERVER_URL;
 }
 
 function getSdk(accessKey: string, headers: Record<string, string>, customServerUrl: string): AccountManager {

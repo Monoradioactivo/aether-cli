@@ -13,6 +13,7 @@
     "prettier": "prettier --write \"./**/*.ts\"",
     "lint": "npx eslint \"./script/**/*.ts\"",
     "lint:fix": "npx eslint \"./script/**/*.ts\" --fix",
+    "pretest": "npm run build",
     "test": "jest",
     "pins:check": "node scripts/check-version-pins.mjs"
   },
