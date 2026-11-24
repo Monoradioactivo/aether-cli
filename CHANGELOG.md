@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.12.0...v0.13.0) (2026-11-24)
+
+
+### Features
+
+* **cli:** add read-only aether mcp stdio server ([#204](https://github.com/Monoradioactivo/aether-cli/issues/204)) ([75c8314](https://github.com/Monoradioactivo/aether-cli/commit/75c8314c75e7cf2ce8d44b310e9512f02054f77f))
+
 ## [0.12.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.11.0...v0.12.0) (2026-11-24)
 
 
