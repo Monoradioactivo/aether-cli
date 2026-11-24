@@ -157,7 +157,7 @@ It offers five tools, and none of them changes anything:
 Create an API key in the dashboard under API Keys and leave only the `read` scope ticked. Add the server to your client's user-level configuration, never to a project file that gets committed. With Claude Code:
 
 ```sh
-claude mcp add --scope user aether -e AETHER_MCP_API_KEY=aether_sk_live_… -- npx -y @aetherpush/cli@0 mcp
+claude mcp add --scope user aether -e AETHER_MCP_API_KEY=aether_sk_live_… -- npx -y @aetherpush/cli@0.13.0 mcp
 ```
 
 That command leaves the key in your shell history. Other clients take the same command in their `mcpServers` configuration file, which keeps it out of the history:
@@ -168,14 +168,14 @@ That command leaves the key in your shell history. Other clients take the same c
     "aether": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@aetherpush/cli@0", "mcp"],
+      "args": ["-y", "@aetherpush/cli@0.13.0", "mcp"],
       "env": { "AETHER_MCP_API_KEY": "aether_sk_live_…" }
     }
   }
 }
 ```
 
-`@aetherpush/cli@0` asks for a 0.x release. Tool names and inputs change only in a new major version, so a future 1.0 does not reach your agent until you change that line. npm 11.12 and later fetch the newest 0.x each time the client starts the server. npm 10, the version bundled with Node.js 22, keeps whichever 0.x it downloaded first; delete `~/.npm/_npx` to pick up a newer one, or write an exact version in place of `0`. Use `npx` with the package name instead of a bare `aether`: a global install of an older CLI on the client's `PATH` answers `mcp` with its help text, which the client reads as a broken stream. The server needs Node.js 22 or later.
+Pin an exact version, 0.13.0 or later (`npm view @aetherpush/cli version` prints the newest). npx then runs that version even when an older CLI is installed globally or in the project, and an upgrade reaches your agent only when you change the number. Tool names and inputs change only in a new major version, so moving to a newer 0.x keeps them. Do not use a range such as `@0`: npx runs any installed copy that satisfies it, and a CLI older than 0.13.0 has no `mcp` subcommand. It prints its banner on stdout and exits, which the client reads as a broken stream. For the same reason, do not point the client at a bare `aether` command. The server needs Node.js 22 or later.
 
 Keep the key's reach small:
 
