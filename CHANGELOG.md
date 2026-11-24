@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.11.0...v0.12.0) (2026-11-24)
+
+
+### Features
+
+* **cli:** send a TOTP step-up on app-transfer create ([#202](https://github.com/Monoradioactivo/aether-cli/issues/202)) ([1ec58d2](https://github.com/Monoradioactivo/aether-cli/commit/1ec58d28061261eee851927104af2c7eb17e0098))
+
 ## [0.11.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.10.1...v0.11.0) (2026-11-21)
 
 
