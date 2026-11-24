@@ -379,8 +379,106 @@ function formatAppTransferWarnings(warnings: AppTransferWarnings): string[] {
   return lines;
 }
 
+const STEP_UP_REQUIRED_CODE = "step_up_required";
+const TOTP_CODE_PATTERN = /^\d{6}$/;
+const PASSKEY_ONLY_TRANSFER_GUIDANCE = "An account that only uses passkeys has to create the transfer from the dashboard.";
+
+function isStepUpRequired(error: unknown): error is AetherError {
+  return error instanceof AetherError && error.statusCode === 401 && error.code === STEP_UP_REQUIRED_CODE;
+}
+
+function normalizeTotpCode(raw: string): string {
+  const code = raw.replace(/\s+/g, "");
+  if (!TOTP_CODE_PATTERN.test(code)) {
+    throw new Error("The authenticator code must be the six digits your authenticator app shows.");
+  }
+  return code;
+}
+
+function canPromptForStepUp(command: cli.ICommand): boolean {
+  return !command.nonInteractive && process.stdin.isTTY === true;
+}
+
+function transferStepUpError(refusal: AetherError, message: string): AetherError {
+  return new AetherError(`${message} ${PASSKEY_ONLY_TRANSFER_GUIDANCE}`, refusal.statusCode, refusal.requestId, refusal.code);
+}
+
+function promptForTotpCode(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const closedWithoutAnswer = (): void => {
+      reject(new Error(`The prompt closed before a code was entered, so no transfer was created. ${PASSKEY_ONLY_TRANSFER_GUIDANCE}`));
+    };
+    process.once("beforeExit", closedWithoutAnswer);
+    prompt.message = "";
+    prompt.delimiter = "";
+    prompt.start();
+    prompt.get(
+      {
+        properties: {
+          totp: { description: chalk.cyan("Authenticator code (leave empty if your account only uses passkeys): ") },
+        },
+      },
+      (err: Error | null, result: { totp?: string } | undefined) => {
+        process.removeListener("beforeExit", closedWithoutAnswer);
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve((result?.totp ?? "").trim());
+      }
+    );
+  });
+}
+
+async function createAppTransferWithStepUp(
+  command: cli.IAppTransferCreateCommand,
+  suppliedCode: string | undefined
+): Promise<AppTransferCreateResponse> {
+  try {
+    return await sdk.createAppTransfer(command.appName, command.email, suppliedCode);
+  } catch (error: unknown) {
+    if (!isStepUpRequired(error)) {
+      throw error;
+    }
+    if (!canPromptForStepUp(command)) {
+      throw transferStepUpError(
+        error,
+        suppliedCode === undefined
+          ? "This account has multi-factor authentication, so the transfer needs a current code from the authenticator app of the account this credential belongs to. Re-run with --totp <code>."
+          : "The authenticator code was not accepted. Each code confirms one transfer and works once, so re-run with --totp and the next code."
+      );
+    }
+    log(
+      chalk.yellow(
+        suppliedCode === undefined
+          ? "This account has multi-factor authentication. Enter the current code from its authenticator app to confirm the transfer; each code confirms one transfer."
+          : "The authenticator code was not accepted. Each code confirms one transfer and works once; enter the next code."
+      )
+    );
+  }
+
+  const answer = await promptForTotpCode();
+  if (!answer) {
+    throw new Error(`No code was entered, so no transfer was created. ${PASSKEY_ONLY_TRANSFER_GUIDANCE}`);
+  }
+  const retryCode = normalizeTotpCode(answer);
+
+  try {
+    return await sdk.createAppTransfer(command.appName, command.email, retryCode);
+  } catch (error: unknown) {
+    if (isStepUpRequired(error)) {
+      throw transferStepUpError(
+        error,
+        "The authenticator code was not accepted, so no transfer was created. Each code works once, so wait for the next code before you try again."
+      );
+    }
+    throw error;
+  }
+}
+
 function appTransferCreate(command: cli.IAppTransferCreateCommand): Promise<void> {
   throwForInvalidEmail(command.email);
+  const suppliedCode = command.totp === undefined ? undefined : normalizeTotpCode(command.totp);
 
   const confirmMessage =
     'Create a pending cross-workspace transfer of app "' +
@@ -395,7 +493,7 @@ function appTransferCreate(command: cli.IAppTransferCreateCommand): Promise<void
       return;
     }
 
-    return sdk.createAppTransfer(command.appName, command.email).then((result: AppTransferCreateResponse): void => {
+    return createAppTransferWithStepUp(command, suppliedCode).then((result: AppTransferCreateResponse): void => {
       log(
         'Created pending cross-workspace transfer of app "' +
           command.appName +
@@ -2235,12 +2333,6 @@ function resolveServerUrl(storedServerUrl?: string): string {
 
 function getSdk(accessKey: string, headers: Record<string, string>, customServerUrl: string): AccountManager {
   const sdk: any = new AccountManager(accessKey, CLI_HEADERS, customServerUrl);
-  /*
-   * If the server returns `Unauthorized`, it must be due to an invalid
-   * (or expired) access key. For convenience, we patch every SDK call
-   * to delete the cached connection so the user can simply
-   * login again instead of having to log out first.
-   */
   Object.getOwnPropertyNames(AccountManager.prototype).forEach((functionName: any) => {
     if (typeof sdk[functionName] === "function") {
       const originalFunction = sdk[functionName];
@@ -2248,8 +2340,8 @@ function getSdk(accessKey: string, headers: Record<string, string>, customServer
         let maybePromise: Promise<any> = originalFunction.apply(sdk, arguments);
         if (maybePromise && maybePromise.then !== undefined) {
           maybePromise = maybePromise.catch((error: any) => {
-            if (error.statusCode && error.statusCode === 401) {
-              deleteConnectionInfoCache(/* printMessage */ false);
+            if (error.statusCode === 401 && error.code !== STEP_UP_REQUIRED_CODE) {
+              deleteConnectionInfoCache(false);
             }
 
             throw error;

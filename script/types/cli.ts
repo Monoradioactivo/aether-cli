@@ -120,6 +120,7 @@ export interface IAppTransferCommand extends ICommand {
 export interface IAppTransferCreateCommand extends ICommand {
   appName: string;
   email: string;
+  totp?: string;
 }
 
 export interface IAppTransferListCommand extends ICommand {

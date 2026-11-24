@@ -326,6 +326,32 @@ describe("management-sdk / AccountManager", () => {
       expect(JSON.parse(init.body as string)).toEqual({ appName: "my-app", email: "new@owner.com" });
     });
 
+    it("createAppTransfer sends an authenticator code as a TOTP step-up proof", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(jsonResponse(201, { transfer: { id: "t1" }, warnings: {} }));
+      await sdk.createAppTransfer("my-app", "new@owner.com", "012345");
+      const { init } = lastFetchCall(fetchSpy);
+      expect(JSON.parse(init.body as string)).toEqual({
+        appName: "my-app",
+        email: "new@owner.com",
+        stepUp: { type: "totp", code: "012345" },
+      });
+    });
+
+    it("createAppTransfer carries the step_up_required code on a 401 refusal", async () => {
+      const sdk = newSdk();
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(401, {
+          error: "Confirm a second factor you already have before transferring this app.",
+          code: "step_up_required",
+        })
+      );
+      const error = await sdk.createAppTransfer("my-app", "new@owner.com").catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(AetherError);
+      expect(error.statusCode).toBe(401);
+      expect(error.code).toBe("step_up_required");
+    });
+
     it("listAppTransfers GETs /v1/app-transfers", async () => {
       const sdk = newSdk();
       const body = { inbound: [], outbound: [] };

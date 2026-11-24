@@ -58,6 +58,8 @@ const APP_TRANSFER_SESSION_NOTE =
   "list and accept require a browser login session (`aether login`). API keys and named access keys can create and cancel only.";
 const APP_TRANSFER_CROSS_WORKSPACE_NOTE =
   "Same-workspace ownership moves use `aether app transfer`. Cross-workspace pending invites use this command group.";
+const APP_TRANSFER_STEP_UP_NOTE =
+  "An account with multi-factor authentication confirms each transfer with its own authenticator code: pass --totp, or enter it when asked, and wait for the next code before the next transfer. An account that only uses passkeys creates transfers from the dashboard.";
 
 function accessKeyAdd(commandName: string, yargs: yargs.Argv): void {
   isValidCommand = true;
@@ -555,12 +557,23 @@ yargs
       .command("create", "Create a pending cross-workspace transfer invite", (yargs: yargs.Argv): void => {
         isValidCommand = true;
         yargs
-          .usage(USAGE_PREFIX + " app-transfer create <appName> <email>")
-          .demand(/*count*/ 2, /*max*/ 2)
+          .usage(USAGE_PREFIX + " app-transfer create <appName> <email>\n\n" + APP_TRANSFER_STEP_UP_NOTE)
+          .demand(2, 2)
           .example(
             "app-transfer create MyApp other@example.com",
             'Creates a pending invite to move app "MyApp" to the account with that email'
-          );
+          )
+          .example(
+            "app-transfer create MyApp other@example.com --totp 123456",
+            "Sends a current authenticator code with the request, for accounts with multi-factor authentication"
+          )
+          .option("totp", {
+            demand: false,
+            description:
+              "Current six-digit authenticator code of the account this credential belongs to, required when it has multi-factor authentication. Each code confirms one transfer",
+            nargs: 1,
+            type: "string",
+          });
 
         addCommonConfiguration(yargs);
       })
@@ -1341,6 +1354,9 @@ export function createCommand(): cli.ICommand {
               cmd = { type: cli.CommandType.appTransferCreate };
               (<cli.IAppTransferCreateCommand>cmd).appName = arg2;
               (<cli.IAppTransferCreateCommand>cmd).email = arg3;
+              if (typeof argv["totp"] === "string") {
+                (<cli.IAppTransferCreateCommand>cmd).totp = argv["totp"];
+              }
             }
             break;
 
