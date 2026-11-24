@@ -140,6 +140,55 @@ aether login --serverUrl http://localhost:3000
 
 The CLI detects CI environments through the `CI` variable and runs non-interactively there; `--ci` forces it. Ready-made pipeline templates for GitLab CI, CircleCI, Jenkins, and Bitrise live in [`examples/ci/`](./examples/ci/), and GitHub Actions has a dedicated action, [`aetherpush-deploy-action`](https://github.com/Monoradioactivo/aetherpush-deploy-action). The [CI/CD guides](https://docs.aetherpush.com/ci-cd/) walk through each platform.
 
+## MCP server (beta)
+
+`aether mcp` runs a read-only [Model Context Protocol](https://modelcontextprotocol.io) server on stdin and stdout, so an AI agent can look up your releases. It speaks protocol revision 2026-07-28 and has been checked with Claude Code 2.1.331. Clients that still open with `initialize` are refused with the version the server supports.
+
+It offers five tools, and none of them changes anything:
+
+| Tool | Answers |
+|---|---|
+| `list_apps` | Which apps and deployments the key can read |
+| `get_live_release` | Which release is live on each deployment |
+| `list_release_history` | Recent releases of one deployment, newest first (up to 20) |
+| `get_release_health` | Install counts per release (and per app version for devices still on the store binary), plus recent automatic halts and warnings |
+| `preview_rollback` | What a rollback would do. It never runs one |
+
+Create an API key in the dashboard under API Keys and leave only the `read` scope ticked. Add the server to your client's user-level configuration, never to a project file that gets committed. With Claude Code:
+
+```sh
+claude mcp add --scope user aether -e AETHER_MCP_API_KEY=aether_sk_live_… -- npx -y @aetherpush/cli@0 mcp
+```
+
+That command leaves the key in your shell history. Other clients take the same command in their `mcpServers` configuration file, which keeps it out of the history:
+
+```json
+{
+  "mcpServers": {
+    "aether": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@aetherpush/cli@0", "mcp"],
+      "env": { "AETHER_MCP_API_KEY": "aether_sk_live_…" }
+    }
+  }
+}
+```
+
+`@aetherpush/cli@0` asks for a 0.x release. Tool names and inputs change only in a new major version, so a future 1.0 does not reach your agent until you change that line. npm 11.12 and later fetch the newest 0.x each time the client starts the server. npm 10, the version bundled with Node.js 22, keeps whichever 0.x it downloaded first; delete `~/.npm/_npx` to pick up a newer one, or write an exact version in place of `0`. Use `npx` with the package name instead of a bare `aether`: a global install of an older CLI on the client's `PATH` answers `mcp` with its help text, which the client reads as a broken stream. The server needs Node.js 22 or later.
+
+Keep the key's reach small:
+
+- Issue the key from an account whose role on each app is the lowest that answers your questions. A `read` key cannot change anything, but the REST API still shows it deployment keys when its issuer's role can read them.
+- The `aether login` session in `~/.aether/credentials.json` has every scope and sits on the same machine. An agent that also has shell access can read it, so give the client only the Aether tools when you can.
+
+- `AETHER_MCP_API_KEY` must be an API key (`aether_sk_live_…`). Access keys and CLI sessions are refused, because they carry every scope.
+- `AETHER_MCP_API_URL` is optional and defaults to `https://api.aetherpush.com`. It must be an https root URL; plain http is accepted only on `127.0.0.1` or `[::1]`. The CI variable `AETHER_API_URL` is not read here.
+- Output is limited to what the tools need: deployment keys, blob URLs, package hashes and collaborator emails never reach the agent. Release descriptions and app and deployment names are written by your collaborators, so the server strips hidden characters, caps their length and marks them as untrusted text. Apps shared with you whose name clashes with one of your own are listed under another owner's address, so `list_apps` leaves them out and says how many it left out.
+- The server makes at most 3 API calls per tool call and 20 per minute, and pauses when the tenant's remaining request budget drops to 10, so an agent cannot spend the rate limit your CI shares. After a rejected key it waits a minute before trying again.
+- `list_release_history` and `preview_rollback` refuse deployments with more than 500 releases.
+- stdout carries MCP messages only; diagnostics go to stderr. `aether mcp --help` lists the variables.
+
 ## Migrating from CodePush
 
 The [migration guide](https://docs.aetherpush.com/migration/codepush/) covers both routes. In short: the Aether SDK is a drop-in replacement for `react-native-code-push` on React Native 0.76 and newer, and older apps can keep Microsoft's SDK pointed at Aether's CodePush-compatible endpoints. Existing deployment keys can be preserved with `aether deployment add -k`, so shipped binaries keep updating.

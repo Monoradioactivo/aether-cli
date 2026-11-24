@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
-// Copyright (c) Aether. All rights reserved.
+import type * as ParserModule from "./command-parser";
+import type * as ExecutorModule from "./command-executor";
+import type * as McpServerModule from "./mcp/server";
+import type * as ChalkModule from "chalk";
 
-import * as parser from "./command-parser";
-import * as execute from "./command-executor";
-import * as chalk from "chalk";
-
-function run(): void {
+function runCommandLine(): void {
+  const parser: typeof ParserModule = require("./command-parser");
+  const execute: typeof ExecutorModule = require("./command-executor");
+  const chalk: typeof ChalkModule = require("chalk");
   const command = parser.createCommand();
 
   if (parser.parseFailed) {
@@ -14,7 +16,7 @@ function run(): void {
   }
 
   if (!command) {
-    parser.showHelp(/*showRootDescription*/ false);
+    parser.showHelp(false);
     return;
   }
 
@@ -24,4 +26,14 @@ function run(): void {
   });
 }
 
-run();
+function runMcpServer(): void {
+  const mcp: typeof McpServerModule = require("./mcp/server");
+  const packageJson = require("../../package.json");
+  mcp.main({ argv: process.argv.slice(3), version: packageJson.version });
+}
+
+if (process.argv[2] === "mcp") {
+  runMcpServer();
+} else {
+  runCommandLine();
+}

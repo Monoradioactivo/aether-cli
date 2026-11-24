@@ -21,5 +21,13 @@
     ],
     "eqeqeq": "error",
     "no-eval": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["script/mcp/**/*.ts"],
+      "rules": {
+        "no-console": "error"
+      }
+    }
+  ]
 }
