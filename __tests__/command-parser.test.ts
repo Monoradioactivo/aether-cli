@@ -334,6 +334,13 @@ describe("command-parser", () => {
       expect(cmd.type).toBe(CommandType.appTransferCreate);
       expect(cmd.appName).toBe("MyApp");
       expect(cmd.email).toBe("other@example.com");
+      expect(cmd.totp).toBeUndefined();
+    });
+
+    it("'app-transfer create <appName> <email> --totp <code>' keeps the code as a string", () => {
+      const cmd = parseArgs(["app-transfer", "create", "MyApp", "other@example.com", "--totp", "012345"]);
+      expect(cmd.type).toBe(CommandType.appTransferCreate);
+      expect(cmd.totp).toBe("012345");
     });
 
     it("'app-transfer list' defaults --format to table", () => {

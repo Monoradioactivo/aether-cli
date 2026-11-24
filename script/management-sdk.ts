@@ -211,8 +211,9 @@ class AccountManager {
     await this.request("POST", urlEncode`/v1/apps/${appName}/transfers`, { email }, false);
   }
 
-  public async createAppTransfer(appName: string, email: string): Promise<AppTransferCreateResponse> {
-    const res = await this.request("POST", "/v1/app-transfers", { appName, email }, true);
+  public async createAppTransfer(appName: string, email: string, totpCode?: string): Promise<AppTransferCreateResponse> {
+    const body = totpCode === undefined ? { appName, email } : { appName, email, stepUp: { type: "totp", code: totpCode } };
+    const res = await this.request("POST", "/v1/app-transfers", body, true);
     return res.body;
   }
 

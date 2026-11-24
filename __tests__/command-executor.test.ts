@@ -659,12 +659,176 @@ describe("command-executor", () => {
         email: "other@example.com",
         force: true,
       });
-      expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledWith("MyApp", "other@example.com");
+      expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledWith("MyApp", "other@example.com", undefined);
       expect(mockSdkMethods.transferApp).not.toHaveBeenCalled();
       expect(logSpy.mock.calls.some((call) => String(call[0]).includes("22222222-2222-2222-2222-222222222222"))).toBe(true);
       expect(logSpy.mock.calls.some((call) => String(call[0]).includes("No email is sent"))).toBe(true);
       expect(logSpy.mock.calls.some((call) => String(call[0]).includes("quota"))).toBe(true);
       logSpy.mockRestore();
+    });
+
+    describe("appTransferCreate step-up", () => {
+      const CREATED = {
+        transfer: { id: "22222222-2222-2222-2222-222222222222" },
+        warnings: { quotaExceeded: false, nameConflict: false },
+      };
+      const stepUpRefusal = (): AetherError =>
+        new AetherError("Confirm a second factor you already have before transferring this app.", 401, "req_su", "step_up_required");
+      const throttled = (): AetherError =>
+        new AetherError("Too many failed step-up attempts. Please try again later.", 429, "req_tm", "too_many_mfa_attempts");
+      const create = (extra: Record<string, unknown> = {}) =>
+        executor.execute({
+          type: cli.CommandType.appTransferCreate,
+          appName: "MyApp",
+          email: "other@example.com",
+          force: true,
+          ...extra,
+        });
+      const setTotpAnswer = (totp: string): void => {
+        mockPromptGet.mockImplementation((_schema: any, cb: any) => cb(null, { totp }));
+      };
+
+      let stdinTty: PropertyDescriptor | undefined;
+
+      const setStdinTty = (value: boolean | undefined): void => {
+        Object.defineProperty(process.stdin, "isTTY", { value, configurable: true, writable: true });
+      };
+
+      beforeEach(() => {
+        stdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+        setStdinTty(true);
+      });
+
+      afterEach(() => {
+        if (stdinTty) {
+          Object.defineProperty(process.stdin, "isTTY", stdinTty);
+        } else {
+          delete (process.stdin as any).isTTY;
+        }
+      });
+
+      it("sends --totp with the first request, whitespace removed", async () => {
+        mockSdkMethods.createAppTransfer.mockResolvedValue(CREATED);
+        await create({ totp: " 012 345 " });
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledTimes(1);
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledWith("MyApp", "other@example.com", "012345");
+        expect(mockPromptGet).not.toHaveBeenCalled();
+      });
+
+      it("refuses a --totp that is not six digits before any request", async () => {
+        await expect(create({ totp: "12345" })).rejects.toThrow(/six digits/);
+        expect(mockSdkMethods.createAppTransfer).not.toHaveBeenCalled();
+      });
+
+      it("prompts once after step_up_required and retries with the entered code", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal()).mockResolvedValueOnce(CREATED);
+        setTotpAnswer("654321");
+        await create();
+        expect(mockPromptGet).toHaveBeenCalledTimes(1);
+        expect(mockSdkMethods.createAppTransfer.mock.calls).toEqual([
+          ["MyApp", "other@example.com", undefined],
+          ["MyApp", "other@example.com", "654321"],
+        ]);
+        expect(consoleLogSpy.mock.calls.some((call) => String(call[0]).includes(CREATED.transfer.id))).toBe(true);
+      });
+
+      it("prompts after a refused --totp and retries once with the new code", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal()).mockResolvedValueOnce(CREATED);
+        setTotpAnswer("222222");
+        await create({ totp: "111111" });
+        expect(mockSdkMethods.createAppTransfer.mock.calls.map((call) => call[2])).toEqual(["111111", "222222"]);
+      });
+
+      it("stops after the retry is refused, without a third request", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValue(stepUpRefusal());
+        setTotpAnswer("654321");
+        const error = await create().catch((err: unknown) => err);
+        expect(error).toBeInstanceOf(AetherError);
+        expect(error.message).toMatch(/not accepted, so no transfer was created/);
+        expect(error.message).toMatch(/only uses passkeys has to create the transfer from the dashboard/);
+        expect(error.code).toBe("step_up_required");
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledTimes(2);
+        expect(mockPromptGet).toHaveBeenCalledTimes(1);
+      });
+
+      it("sends a passkey-only owner to the dashboard when the prompt is left empty", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal());
+        setTotpAnswer("   ");
+        await expect(create()).rejects.toThrow(
+          /No code was entered.*only uses passkeys has to create the transfer from the dashboard/
+        );
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledTimes(1);
+      });
+
+      it("fails instead of exiting quietly when the prompt closes without an answer", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal());
+        mockPromptGet.mockImplementation(() => undefined);
+        const listenersBefore = process.listenerCount("beforeExit");
+        const pending = create();
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(mockPromptGet).toHaveBeenCalledTimes(1);
+        expect(process.listenerCount("beforeExit")).toBe(listenersBefore + 1);
+        process.emit("beforeExit", 0);
+        await expect(pending).rejects.toThrow(/prompt closed before a code was entered, so no transfer was created/);
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledTimes(1);
+        expect(process.listenerCount("beforeExit")).toBe(listenersBefore);
+      });
+
+      it("stops listening for exit once the prompt is answered", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal()).mockResolvedValueOnce(CREATED);
+        setTotpAnswer("654321");
+        const listenersBefore = process.listenerCount("beforeExit");
+        await create();
+        expect(process.listenerCount("beforeExit")).toBe(listenersBefore);
+      });
+
+      it("refuses a mistyped answer at the prompt without a second request", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal());
+        setTotpAnswer("12 34");
+        await expect(create()).rejects.toThrow(/six digits/);
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledTimes(1);
+      });
+
+      it("names --totp and the dashboard in non-interactive mode, without prompting", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal());
+        const error = await create({ nonInteractive: true }).catch((err: unknown) => err);
+        expect(error.message).toMatch(/Re-run with --totp <code>/);
+        expect(error.message).toMatch(/only uses passkeys has to create the transfer from the dashboard/);
+        expect(error.statusCode).toBe(401);
+        expect(error.requestId).toBe("req_su");
+        expect(mockPromptGet).not.toHaveBeenCalled();
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledTimes(1);
+      });
+
+      it("asks for a new code when a --totp is refused in non-interactive mode", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal());
+        await expect(create({ nonInteractive: true, totp: "111111" })).rejects.toThrow(/re-run with --totp and the next code/);
+        expect(mockPromptGet).not.toHaveBeenCalled();
+      });
+
+      it("does not prompt when stdin is not a terminal", async () => {
+        setStdinTty(undefined);
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal());
+        await expect(create({ nonInteractive: false })).rejects.toThrow(/Re-run with --totp <code>/);
+        expect(mockPromptGet).not.toHaveBeenCalled();
+      });
+
+      it("surfaces too_many_mfa_attempts as is, without prompting", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(throttled());
+        const error = await create({ totp: "111111" }).catch((err: unknown) => err);
+        expect(error.statusCode).toBe(429);
+        expect(error.code).toBe("too_many_mfa_attempts");
+        expect(error.message).toBe("Too many failed step-up attempts. Please try again later.");
+        expect(mockPromptGet).not.toHaveBeenCalled();
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledTimes(1);
+      });
+
+      it("surfaces too_many_mfa_attempts on the retry as is", async () => {
+        mockSdkMethods.createAppTransfer.mockRejectedValueOnce(stepUpRefusal()).mockRejectedValueOnce(throttled());
+        setTotpAnswer("654321");
+        await expect(create()).rejects.toMatchObject({ statusCode: 429, code: "too_many_mfa_attempts" });
+        expect(mockSdkMethods.createAppTransfer).toHaveBeenCalledTimes(2);
+      });
     });
 
     it("appTransferList calls listAppTransfers", async () => {
