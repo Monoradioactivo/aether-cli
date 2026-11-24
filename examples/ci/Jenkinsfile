@@ -52,7 +52,7 @@ pipeline {
     }
     environment {
         CI = 'true'
-        AETHER_CLI_VERSION = '0.13.0' // x-release-please-version
+        AETHER_CLI_VERSION = '0.13.1' // x-release-please-version
         AETHER_APP_NAME = 'MyApp-Android'
         AETHER_PLATFORM = 'android'
         AETHER_API_KEY = credentials('aether-api-key')

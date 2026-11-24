@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.13.0...v0.13.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **cli:** pin an exact version in the mcp setup ([#206](https://github.com/Monoradioactivo/aether-cli/issues/206)) ([9ebe6b4](https://github.com/Monoradioactivo/aether-cli/commit/9ebe6b49338d17519656b75652772f646833ab44))
+
 ## [0.13.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.12.0...v0.13.0) (2026-11-24)
 
 
