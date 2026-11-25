@@ -60,6 +60,16 @@
         "major"
       ],
       "enabled": false
+    },
+    {
+      "description": "chalk v5+ is ESM-only; the CLI builds as CommonJS with moduleResolution node, so majors wait for an ESM migration brief rather than Renovate",
+      "matchDepNames": [
+        "chalk"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
     }
   ],
   "timezone": "America/Mexico_City",
