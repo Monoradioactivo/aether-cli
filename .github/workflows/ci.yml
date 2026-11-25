@@ -72,8 +72,5 @@ jobs:
       - name: Commit provenance tests
         run: node --test scripts/commit-provenance.test.mjs scripts/ci-concurrency-head.test.mjs
 
-      - name: MCP eval harness tests
-        run: node --test scripts/mcp-tool-selection-eval.test.mjs
-
       - name: Test
         run: npm test

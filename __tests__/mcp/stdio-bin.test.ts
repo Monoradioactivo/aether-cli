@@ -1,10 +1,19 @@
 import { spawn } from "child_process";
+import { createHash } from "crypto";
 import { existsSync } from "fs";
 import { createServer, IncomingMessage, Server, ServerResponse } from "http";
 import { AddressInfo } from "net";
 import * as path from "path";
 
+import { DEFAULT_AETHER_SERVER_URL } from "../../script/server-url";
+
 const BIN = path.resolve(__dirname, "../../bin/script/cli.js");
+const CLI_MANIFEST = require("../../package.json");
+const MCP_MANIFEST_PATH = require.resolve("@aetherpush/mcp/package.json");
+const MCP_MANIFEST = require(MCP_MANIFEST_PATH);
+const MCP_BIN = path.join(path.dirname(MCP_MANIFEST_PATH), MCP_MANIFEST.bin["aether-mcp"]);
+const TOOL_NAMES = ["list_apps", "get_live_release", "list_release_history", "get_release_health", "preview_rollback"];
+const TOOL_CONTRACT_SHA256 = "4042e429088824522fbb65277ec01db0beb53959a80408de9ccbaced078c85cc";
 const KEY = "aether_sk_live_binTestKey42";
 const META = { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} };
 
@@ -88,15 +97,26 @@ describe("aether mcp from the built bin", () => {
     const byId = new Map(messages.filter((m) => "id" in m).map((m) => [m.id, m]));
     expect([...byId.keys()].sort()).toEqual([1, 2, 3, 4, 5]);
     expect(byId.get(1).result.supportedVersions).toEqual(["2026-07-28"]);
-    expect(byId.get(1).result._meta["io.modelcontextprotocol/serverInfo"].version).toMatch(/^\d+\.\d+\.\d+/);
-    expect(byId.get(2).result.tools).toHaveLength(5);
+    expect(byId.get(1).result._meta["io.modelcontextprotocol/serverInfo"].version).toBe(MCP_MANIFEST.version);
+    const tools = byId.get(2).result.tools;
+    expect(tools.map((tool: { name: string }) => tool.name)).toEqual(TOOL_NAMES);
+    const contract = JSON.stringify(
+      tools.map((tool: { name: string; inputSchema: unknown; outputSchema: unknown; annotations: unknown }) => ({
+        name: tool.name,
+        inputSchema: tool.inputSchema,
+        outputSchema: tool.outputSchema,
+        annotations: tool.annotations,
+      }))
+    );
+    expect(createHash("sha256").update(contract).digest("hex")).toBe(TOOL_CONTRACT_SHA256);
     expect(byId.get(3).result.structuredContent.apps).toEqual([{ name: "Shop", deployments: ["Production"] }]);
     expect(byId.get(4).result.isError).toBe(true);
     expect(byId.get(4).result.content[0].text).toMatch(/rejected the API key/);
     expect(byId.get(5).error.code).toBe(-32602);
     expect(messages.filter((m) => !("id" in m)).map((m) => m.error.code)).toEqual([-32700]);
     expect(hits.some((hit) => hit.startsWith("GET /v1/apps aether-mcp/"))).toBe(true);
-    expect(result.stderr).toMatch(/Module\._load REQUEST \.\/mcp\/server /);
+    expect(result.stderr).toContain(`Module._load REQUEST ./server parent: ${MCP_BIN}\n`);
+    expect(result.stderr).not.toMatch(/Module\._load REQUEST \.\/mcp\//);
     expect(result.stderr).not.toMatch(/Module\._load REQUEST (\.\/command-parser|\.\/command-executor|yargs|chalk) /);
     expect(result.stderr.includes(KEY)).toBe(false);
   });
@@ -119,7 +139,22 @@ describe("aether mcp from the built bin", () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).toMatch(/AETHER_API_URL is set but aether mcp reads AETHER_MCP_API_URL only/);
-    expect(result.stderr).toMatch(/serving read-only tools for https:\/\/api\.aetherpush\.com/);
+    expect(result.stderr).toContain(`serving read-only tools for ${new URL(DEFAULT_AETHER_SERVER_URL).origin} `);
+  });
+
+  test("the CLI pins one exact @aetherpush/mcp version and runs that copy", () => {
+    expect(CLI_MANIFEST.dependencies["@aetherpush/mcp"]).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(CLI_MANIFEST.dependencies["@aetherpush/mcp"]).toBe(MCP_MANIFEST.version);
+  });
+
+  test("the pinned @aetherpush/mcp installs nothing else and runs no install script", () => {
+    expect(MCP_MANIFEST.dependencies).toBeUndefined();
+    expect(MCP_MANIFEST.optionalDependencies).toBeUndefined();
+    expect(MCP_MANIFEST.peerDependencies).toBeUndefined();
+    for (const hook of ["preinstall", "install", "postinstall"]) {
+      expect(MCP_MANIFEST.scripts?.[hook]).toBeUndefined();
+    }
+    expect(MCP_MANIFEST.engines).toEqual(CLI_MANIFEST.engines);
   });
 
   test("--help prints the beta usage to stderr and exits 0", async () => {

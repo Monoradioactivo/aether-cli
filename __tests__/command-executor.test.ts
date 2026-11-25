@@ -87,6 +87,10 @@ import { AetherError } from "../script/errors";
 import * as hashUtils from "../script/hash-utils";
 import { CI_ENVIRONMENT_VARIABLES_TO_SCRUB } from "./fixtures/ci-environment";
 
+const realReadFileSync = fs.readFileSync;
+const SOURCE_FILE = /\.(ts|js|map)$/;
+type ReadOptions = Parameters<typeof fs.readFileSync>[1];
+
 const executor: any = executorMod;
 
 function resetSdkMocks(): void {
@@ -145,10 +149,11 @@ describe("command-executor", () => {
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    readFileSyncSpy = jest.spyOn(fs, "readFileSync").mockImplementation(() => {
-      const err: any = new Error("ENOENT");
-      err.code = "ENOENT";
-      throw err;
+    readFileSyncSpy = jest.spyOn(fs, "readFileSync").mockImplementation((filePath: fs.PathOrFileDescriptor, options?: ReadOptions) => {
+      if (typeof filePath === "string" && SOURCE_FILE.test(filePath)) {
+        return realReadFileSync(filePath, options);
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     });
     unlinkSyncSpy = jest.spyOn(fs, "unlinkSync").mockImplementation(() => undefined);
     mkdirSyncSpy = jest.spyOn(fs, "mkdirSync").mockImplementation(() => undefined as any);

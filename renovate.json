@@ -34,7 +34,32 @@
         "pin",
         "digest"
       ],
+      "matchPackageNames": [
+        "!@aetherpush/mcp"
+      ],
       "groupName": "weekly updates"
+    },
+    {
+      "description": "Open an @aetherpush/mcp bump on the first Renovate run after it is published, as its own pull request. No cooldown: this is our own release. fix, so the bump cuts a CLI release and aether mcp users get it",
+      "matchDepNames": [
+        "@aetherpush/mcp"
+      ],
+      "semanticCommitType": "fix",
+      "schedule": [
+        "at any time"
+      ],
+      "minimumReleaseAge": null,
+      "prPriority": 10
+    },
+    {
+      "description": "A new major of @aetherpush/mcp changes the tool contract that aether mcp serves, so it reaches the CLI through a brief that writes the CLI's breaking change, never through Renovate",
+      "matchDepNames": [
+        "@aetherpush/mcp"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
     }
   ],
   "timezone": "America/Mexico_City",
