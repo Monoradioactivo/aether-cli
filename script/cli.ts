@@ -2,8 +2,8 @@
 
 import type * as ParserModule from "./command-parser";
 import type * as ExecutorModule from "./command-executor";
-import type * as McpServerModule from "./mcp/server";
 import type * as ChalkModule from "chalk";
+import * as path from "path";
 
 function runCommandLine(): void {
   const parser: typeof ParserModule = require("./command-parser");
@@ -27,9 +27,11 @@ function runCommandLine(): void {
 }
 
 function runMcpServer(): void {
-  const mcp: typeof McpServerModule = require("./mcp/server");
-  const packageJson = require("../../package.json");
-  mcp.main({ argv: process.argv.slice(3), version: packageJson.version });
+  const manifestPath = require.resolve("@aetherpush/mcp/package.json");
+  const manifest: { bin: Record<string, string> } = require(manifestPath);
+  const bin = path.join(path.dirname(manifestPath), manifest.bin["aether-mcp"]);
+  process.argv = [process.argv[0], bin, ...process.argv.slice(3)];
+  require(bin);
 }
 
 if (process.argv[2] === "mcp") {

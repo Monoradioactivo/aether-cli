@@ -15,7 +15,7 @@ Configure via GitHub UI: **Settings → General → Pull Requests**.
 
 Configure via GitHub UI: **Settings → Actions → General → Workflow permissions**.
 
-- Default workflow permissions: Read and write
+- Default workflow permissions: read
 - Allow GitHub Actions to create and approve pull requests: disabled. No workflow needs it: `release-please.yml` and
   `auto-merge-release.yml` open, update and merge pull requests with the release bot App token, not `GITHUB_TOKEN`.
 
@@ -71,7 +71,7 @@ Configured at: **npmjs.com → @aetherpush/cli → Settings → Trusted Publishe
 - Organization/user: `Monoradioactivo`
 - Repository: `aether-cli`
 - Workflow filename: `release-please.yml`
-- Environment: (none)
+- Environment: `npm-publish`
 
 If the workflow filename changes, this configuration must be updated. Otherwise publishes will fail with HTTP 404 from
 npm.
@@ -158,6 +158,12 @@ Renovate (`renovate.json`) is the only dependency updater. Dependabot is not con
 - Major updates wait for approval on the Dependency Dashboard issue.
 - npm updates use the `chore` commit type, so they never cut a release on their own.
 - OSV vulnerability alerts are enabled, and at most 3 Renovate pull requests are open at once.
+- `@aetherpush/mcp` is the exception. `aether mcp` runs that package's binary in-process, from the exact version
+  pinned in `dependencies`. Renovate bumps that pin as its own pull request, at any time, with no release age, as a
+  `fix`, so the bump cuts a CLI release. It is kept out of `weekly updates`. A major of `@aetherpush/mcp` is never
+  opened by Renovate: it changes the tool contract `aether mcp` serves, so it arrives through a brief that writes the
+  CLI's breaking change. `__tests__/mcp/stdio-bin.test.ts` pins the tool names and a digest of their input schemas,
+  output schemas and annotations, so a bump that changes any of them goes red and waits for a person.
 
 ## CI
 
