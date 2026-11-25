@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.13.1...v0.14.0) (2026-11-25)
+
+
+### Features
+
+* **cli:** run aether mcp from the @aetherpush/mcp package ([#208](https://github.com/Monoradioactivo/aether-cli/issues/208)) ([980fbf5](https://github.com/Monoradioactivo/aether-cli/commit/980fbf5206b29a948413cabe37c281fea2cb528d))
+
 ## [0.13.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.13.0...v0.13.1) (2026-11-24)
 
 
