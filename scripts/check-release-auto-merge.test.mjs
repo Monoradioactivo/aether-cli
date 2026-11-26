@@ -15,9 +15,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { REQUIRED_TEST_CHECK } from "./release-auto-merge-gate.mjs";
 import {
+  headAtTime,
   holdCommentMarker,
   isGitHubSquashCommit,
   isSquashOfHead,
+  isWithinPullLifetime,
   squashPullNumberOf,
 } from "./check-release-auto-merge.mjs";
 
@@ -36,9 +38,11 @@ const SPAWN_TIMEOUT_MS = 30_000;
 const STUB = [
   "#!/bin/sh",
   'case " $* " in',
-  '  *"/git/commits/"*) printf "%s" "$STUB_SQUASH_COMMIT"; exit 0 ;;',
-  '  *"/compare/"*"...$STUB_SQUASH_DIVERGED_HEAD "*"merge_base_commit"*) printf "%s" "$STUB_SQUASH_COMPARE"; exit 0 ;;',
-  '  *"/compare/"*"merge_base_commit"*) printf "%s" "$STUB_SQUASH_COMPARE_OTHER"; exit 0 ;;',
+  '  *"/git/commits/"*"committedAt"*) printf "%s" "$STUB_SQUASH_COMMIT"; exit 0 ;;',
+  '  *"/git/commits/$STUB_HEAD_SHA "*) printf "%s" "$STUB_HEAD_COMMIT"; exit 0 ;;',
+  '  *" --paginate repos/"*"/activity?ref=refs%2Fheads%2F$STUB_HEAD_REF&"*) printf "%s" "$STUB_BRANCH_ACTIVITY"; exit 0 ;;',
+  '  *"/activity?"*) echo "stub: refusing activity for another ref" >&2; exit 1 ;;',
+  '  *"/compare/"*"...$STUB_HEAD_SHA "*"merge_base_commit"*) printf "%s" "$STUB_SQUASH_COMPARE"; exit 0 ;;',
   '  *"/compare/"*) printf "%s" "$STUB_COMPARE"; exit 0 ;;',
   '  *"/releases/latest"*) printf "%s" "$STUB_LATEST_TAG"; exit 0 ;;',
   '  *"/contents/package.json"*)',
@@ -93,8 +97,7 @@ const STUB = [
   "    exit 0",
   "    ;;",
   '  *"/commits/"*"/pulls"*) printf "%s" "$STUB_COMMIT_PULLS"; exit 0 ;;',
-  '  *"/pulls/"*"/commits?"*) printf "%s" "$STUB_SQUASH_PULL_COMMITS"; exit 0 ;;',
-  '  *"/pulls/"*"merged_at"*) printf "%s" "$STUB_SQUASH_PULL"; exit 0 ;;',
+  '  *"/pulls/"*"headRepo"*) printf "%s" "$STUB_SQUASH_PULL"; exit 0 ;;',
   '  *"/pulls/"*)',
   '    if [ "$STUB_RELEASE_PR_FAIL" = "1" ]; then',
   '      echo "stub: refusing the release pull request read" >&2',
@@ -165,10 +168,11 @@ function runGate({ args = ["0", BASE_TAG], env = {}, repo = REPO } = {}) {
     STUB_COMMIT_PULLS: "",
     STUB_SQUASH_COMMIT: "",
     STUB_SQUASH_PULL: "",
-    STUB_SQUASH_PULL_COMMITS: "",
+    STUB_HEAD_REF: "",
+    STUB_BRANCH_ACTIVITY: "",
+    STUB_HEAD_SHA: "",
+    STUB_HEAD_COMMIT: "",
     STUB_SQUASH_COMPARE: "",
-    STUB_SQUASH_DIVERGED_HEAD: "",
-    STUB_SQUASH_COMPARE_OTHER: "",
     STUB_PINNED_CHECK_SHA: "",
     STUB_PINNED_CHECK_RUNS: "",
     STUB_EVENTS: "",
@@ -558,15 +562,31 @@ function testCheckConcluded(conclusion) {
 }
 
 const SQUASH_BRANCH_UPDATE = "25abf2e6951872892a244d48cb45fa1ea7d8a1cd";
+const SQUASH_HEAD_REF = "feat/server-rollback-dry-run-release-audit";
+const SQUASH_WRITTEN_AT = "2026-11-25T15:44:05Z";
+const DELETED_HEAD = "0000000000000000000000000000000000000000";
 
 function squashPull(overrides = {}) {
   return JSON.stringify({
     number: 613,
-    merged: true,
     base: "main",
-    headSha: SQUASH_BRANCH_UPDATE,
+    headRef: SQUASH_HEAD_REF,
+    headRepo: REPO,
+    createdAt: "2026-11-25T15:37:42Z",
+    closedAt: "2026-11-25T21:55:13Z",
     labels: [],
     author: "Monoradioactivo",
+    ...overrides,
+  });
+}
+
+function squashCommit(overrides = {}) {
+  return JSON.stringify({
+    tree: SQUASH_TREE,
+    parents: [SQUASH_PARENT],
+    verified: true,
+    committerEmail: "noreply@github.com",
+    committedAt: SQUASH_WRITTEN_AT,
     ...overrides,
   });
 }
@@ -578,21 +598,17 @@ function unlinkedSquash(overrides = {}) {
     STUB_PINNED_CHECK_RUNS: testCheckConcluded("success"),
     STUB_COMPARE: compareBody([{ sha: SQUASH_SHA, message: SQUASH_MESSAGE }]),
     STUB_COMMIT_PULLS: "[]",
-    STUB_SQUASH_COMMIT: JSON.stringify({
-      tree: SQUASH_TREE,
-      parents: [SQUASH_PARENT],
-      verified: true,
-      committerEmail: "noreply@github.com",
-    }),
+    STUB_SQUASH_COMMIT: squashCommit(),
     STUB_SQUASH_PULL: squashPull(),
-    STUB_SQUASH_PULL_COMMITS: ndjson([
-      { sha: "7cbdbb0aa000000000000000000000000000f00d", tree: "0000000000000000000000000000000000000001" },
-      { sha: SQUASHED_HEAD, tree: SQUASH_TREE },
-      { sha: SQUASH_BRANCH_UPDATE, tree: SQUASH_TREE },
+    STUB_HEAD_REF: encodeURIComponent(SQUASH_HEAD_REF),
+    STUB_BRANCH_ACTIVITY: ndjson([
+      { timestamp: "2026-11-25T21:55:15Z", after: DELETED_HEAD },
+      { timestamp: "2026-11-25T21:47:52Z", after: SQUASH_BRANCH_UPDATE },
+      { timestamp: "2026-11-25T15:37:22Z", after: SQUASHED_HEAD },
     ]),
-    STUB_SQUASH_DIVERGED_HEAD: SQUASHED_HEAD,
+    STUB_HEAD_SHA: SQUASHED_HEAD,
+    STUB_HEAD_COMMIT: JSON.stringify({ tree: SQUASH_TREE }),
     STUB_SQUASH_COMPARE: JSON.stringify({ status: "diverged", mergeBase: SQUASH_PARENT }),
-    STUB_SQUASH_COMPARE_OTHER: JSON.stringify({ status: "ahead", mergeBase: SQUASH_SHA }),
     ...overrides,
   };
 }
@@ -608,7 +624,7 @@ test("GitHub's squash of a merged pull request it left unlinked is judged as tha
     blessed: true,
     via: "Brief-Verified trailer",
   });
-  assert.match(run.stderr, /GitHub wrote it as the squash of #613, whose commit 93c5944 has the same tree on the same base/);
+  assert.match(run.stderr, /GitHub wrote it as the squash of #613, whose head 93c5944 at that moment has the same tree on the same base/);
 });
 
 test("an unlinked squash whose matching head failed its test check is refused", () => {
@@ -618,22 +634,27 @@ test("an unlinked squash whose matching head failed its test check is refused", 
   assert.match(run.verdict.reasons[0], /#613 \(962cee9\) has no successful .* check \(conclusion: failure\)/);
 });
 
-test("the test check of an unlinked squash is read on the newest pull request commit with its tree", () => {
-  const rerunHead = "a1b2c3d4e5f60000000000000000000000000000";
+test("an unlinked squash is judged on the head its branch had when GitHub wrote it, whatever came later", () => {
+  const rewritten = "a1b2c3d4e5f60000000000000000000000000000";
   const run = runGate({
     env: unlinkedSquash({
-      STUB_SQUASH_PULL: squashPull({ headSha: rerunHead }),
-      STUB_SQUASH_PULL_COMMITS: ndjson([
-        { sha: SQUASHED_HEAD, tree: SQUASH_TREE },
-        { sha: rerunHead, tree: SQUASH_TREE },
+      STUB_BRANCH_ACTIVITY: ndjson([
+        { timestamp: "2026-11-25T18:00:00Z", after: rewritten },
+        { timestamp: "2026-11-25T15:44:05Z", after: SQUASHED_HEAD },
+        { timestamp: "2026-11-25T15:30:00Z", after: "b2c3d4e5f6a10000000000000000000000000000" },
       ]),
-      STUB_SQUASH_COMPARE_OTHER: JSON.stringify({ status: "diverged", mergeBase: SQUASH_PARENT }),
-      STUB_PINNED_CHECK_SHA: rerunHead,
     }),
   });
 
   assert.equal(run.verdict.ok, true, run.stdout);
-  assert.match(run.stderr, /whose commit a1b2c3d has the same tree on the same base/);
+  assert.match(run.stderr, /whose head 93c5944 at that moment/);
+});
+
+test("an unlinked squash of a pull request closed without merging is still judged as that pull request", () => {
+  const run = runGate({ env: unlinkedSquash({ STUB_SQUASH_PULL: squashPull({ merged: false, state: "closed" }) }) });
+
+  assert.equal(run.verdict.ok, true, run.stdout);
+  assert.equal(run.verdict.commits[0].pr, 613);
 });
 
 test("an unlinked squash vouched by its pull request's label needs an allowed label actor", () => {
@@ -655,17 +676,22 @@ test("an unlinked squash vouched by its pull request's label needs an allowed la
 
 const UNLINKED_REFUSALS = [
   ["a subject naming no pull request", { STUB_COMPARE: compareBody([{ sha: SQUASH_SHA, message: "feat(api): dry-run routes\n\nBrief-Verified: x" }]) }],
-  ["an unsigned commit", { STUB_SQUASH_COMMIT: JSON.stringify({ tree: SQUASH_TREE, parents: [SQUASH_PARENT], verified: false, committerEmail: "noreply@github.com" }) }],
-  ["a commit someone else committed", { STUB_SQUASH_COMMIT: JSON.stringify({ tree: SQUASH_TREE, parents: [SQUASH_PARENT], verified: true, committerEmail: "someone@example.com" }) }],
-  ["a merge commit", { STUB_SQUASH_COMMIT: JSON.stringify({ tree: SQUASH_TREE, parents: [SQUASH_PARENT, SQUASHED_HEAD], verified: true, committerEmail: "noreply@github.com" }) }],
-  ["a pull request that was never merged", { STUB_SQUASH_PULL: squashPull({ merged: false }) }],
+  ["an unsigned commit", { STUB_SQUASH_COMMIT: squashCommit({ verified: false }) }],
+  ["a commit someone else committed", { STUB_SQUASH_COMMIT: squashCommit({ committerEmail: "someone@example.com" }) }],
+  ["a merge commit", { STUB_SQUASH_COMMIT: squashCommit({ parents: [SQUASH_PARENT, SQUASHED_HEAD] }) }],
+  ["a commit with no readable commit time", { STUB_SQUASH_COMMIT: squashCommit({ committedAt: "not a date" }) }],
   ["a pull request merged into another branch", { STUB_SQUASH_PULL: squashPull({ base: "develop" }) }],
   ["a pull request read that answers another number", { STUB_SQUASH_PULL: squashPull({ number: 612 }) }],
-  ["a pull request whose final head has another tree", { STUB_SQUASH_PULL_COMMITS: ndjson([{ sha: SQUASHED_HEAD, tree: SQUASH_TREE }, { sha: SQUASH_BRANCH_UPDATE, tree: "0000000000000000000000000000000000000003" }]) }],
-  ["a pull request whose final head is not among its listed commits", { STUB_SQUASH_PULL: squashPull({ headSha: "4444444444444444444444444444444444444444" }) }],
-  ["no pull request commit with the same tree", { STUB_SQUASH_PULL_COMMITS: ndjson([{ sha: SQUASHED_HEAD, tree: "0000000000000000000000000000000000000002" }]) }],
-  ["a matching head that already contains the commit", { STUB_SQUASH_COMPARE: JSON.stringify({ status: "ahead", mergeBase: SQUASH_SHA }) }],
-  ["a matching head on another base", { STUB_SQUASH_COMPARE: JSON.stringify({ status: "diverged", mergeBase: "1111111111111111111111111111111111111111" }) }],
+  ["a pull request from a fork", { STUB_SQUASH_PULL: squashPull({ headRepo: "someone/fork" }) }],
+  ["a pull request whose fork is gone", { STUB_SQUASH_PULL: squashPull({ headRepo: null }) }],
+  ["a pull request opened after the commit was written", { STUB_SQUASH_PULL: squashPull({ createdAt: "2026-11-25T16:00:00Z" }) }],
+  ["a pull request closed before the commit was written", { STUB_SQUASH_PULL: squashPull({ closedAt: "2026-11-25T15:40:00Z" }) }],
+  ["a branch with two heads in the second before the commit", { STUB_BRANCH_ACTIVITY: ndjson([{ timestamp: "2026-11-25T15:40:00Z", after: SQUASHED_HEAD }, { timestamp: "2026-11-25T15:40:00Z", after: "c3d4e5f6a1b20000000000000000000000000000" }]) }],
+  ["a branch with no activity before the commit", { STUB_BRANCH_ACTIVITY: ndjson([{ timestamp: "2026-11-25T16:00:00Z", after: SQUASHED_HEAD }]) }],
+  ["a branch deleted before the commit", { STUB_BRANCH_ACTIVITY: ndjson([{ timestamp: "2026-11-25T15:40:00Z", after: DELETED_HEAD }, { timestamp: "2026-11-25T15:37:22Z", after: SQUASHED_HEAD }]) }],
+  ["a head at that moment with another tree", { STUB_HEAD_COMMIT: JSON.stringify({ tree: "0000000000000000000000000000000000000002" }) }],
+  ["a head at that moment that already contains the commit", { STUB_SQUASH_COMPARE: JSON.stringify({ status: "ahead", mergeBase: SQUASH_SHA }) }],
+  ["a head at that moment on another base", { STUB_SQUASH_COMPARE: JSON.stringify({ status: "diverged", mergeBase: "1111111111111111111111111111111111111111" }) }],
 ];
 
 for (const [shape, overrides] of UNLINKED_REFUSALS) {
@@ -684,6 +710,9 @@ for (const [shape, overrides] of UNLINKED_REFUSALS) {
 for (const [read, overrides] of [
   ["the commit", { STUB_SQUASH_COMMIT: "" }],
   ["the pull request", { STUB_SQUASH_PULL: "" }],
+  ["the head commit", { STUB_HEAD_COMMIT: "" }],
+  ["the comparison", { STUB_SQUASH_COMPARE: "" }],
+  ["the branch activity", { STUB_HEAD_REF: "" }],
 ]) {
   test(`an unlinked squash is unresolved, never accepted, when ${read} cannot be read`, () => {
     const run = runGate({ env: unlinkedSquash(overrides) });
@@ -717,6 +746,39 @@ test("a head matches the squash only when it diverged from it at the squash's pa
   assert.equal(isSquashOfHead({ status: "identical", mergeBase: SQUASH_PARENT }, squash), false);
   assert.equal(isSquashOfHead({ status: "behind", mergeBase: SQUASH_PARENT }, squash), false);
   assert.equal(isSquashOfHead(null, squash), false);
+});
+
+test("the head at a moment is the newest ref update at or before it, and a deletion means none", () => {
+  const events = [
+    { timestamp: "2026-11-25T21:55:15Z", after: DELETED_HEAD },
+    { timestamp: "2026-11-25T15:44:05Z", after: "b" },
+    { timestamp: "2026-11-25T15:37:22Z", after: "a" },
+  ];
+  assert.equal(headAtTime(events, "2026-11-25T15:44:05Z"), "b");
+  assert.equal(headAtTime(events, "2026-11-25T15:44:04Z"), "a");
+  assert.equal(headAtTime(events, "2026-11-25T22:00:00Z"), null);
+  assert.equal(headAtTime(events, "2026-11-25T15:00:00Z"), null);
+  assert.equal(headAtTime(events, "not a date"), null);
+  assert.equal(headAtTime(null, "2026-11-25T15:44:05Z"), null);
+  const tied = [
+    { timestamp: "2026-11-25T15:40:00Z", after: "older" },
+    { timestamp: "2026-11-25T15:40:00Z", after: "newer" },
+  ];
+  assert.equal(headAtTime(tied, "2026-11-25T15:44:05Z"), null);
+  assert.equal(headAtTime(tied.slice().reverse(), "2026-11-25T15:44:05Z"), null);
+  assert.equal(headAtTime([...tied, { timestamp: "2026-11-25T15:41:00Z", after: "c" }], "2026-11-25T15:44:05Z"), "c");
+});
+
+test("a moment counts for a pull request only between its opening and its closing", () => {
+  const pull = { createdAt: "2026-11-25T15:37:42Z", closedAt: "2026-11-25T21:55:13Z" };
+  assert.equal(isWithinPullLifetime(pull, "2026-11-25T15:44:05Z"), true);
+  assert.equal(isWithinPullLifetime(pull, "2026-11-25T21:55:13Z"), true);
+  assert.equal(isWithinPullLifetime(pull, "2026-11-25T15:37:41Z"), false);
+  assert.equal(isWithinPullLifetime(pull, "2026-11-25T21:55:14Z"), false);
+  assert.equal(isWithinPullLifetime({ ...pull, closedAt: null }, "2026-12-01T00:00:00Z"), true);
+  assert.equal(isWithinPullLifetime({ ...pull, closedAt: "garbage" }, "2026-11-25T15:44:05Z"), false);
+  assert.equal(isWithinPullLifetime({ ...pull, createdAt: null }, "2026-11-25T15:44:05Z"), false);
+  assert.equal(isWithinPullLifetime(null, "2026-11-25T15:44:05Z"), false);
 });
 
 test("the base tag is read from the latest release when no tag argument is given", () => {
@@ -966,7 +1028,7 @@ test("importing the module runs no gate and writes no output", () => {
   assert.equal(result.status, 0);
   assert.match(
     result.stdout,
-    /IMPORTED \["HOLD_COMMENT_MARKER_PREFIX","contentsFetchFailedAsMissing","holdCommentMarker","isGitHubSquashCommit","isSquashOfHead","squashPullNumberOf","versionFromPayloads"\]/,
+    /IMPORTED \["HOLD_COMMENT_MARKER_PREFIX","contentsFetchFailedAsMissing","headAtTime","holdCommentMarker","isGitHubSquashCommit","isSquashOfHead","isWithinPullLifetime","squashPullNumberOf","versionFromPayloads"\]/,
   );
   assert.doesNotMatch(result.stdout, /"ok":/);
   assert.equal(readFileSync(output, "utf8"), "");
