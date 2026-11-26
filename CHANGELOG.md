@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/Monoradioactivo/aether-cli/compare/v0.14.0...v0.14.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **deps:** update dependency @aetherpush/mcp to v0.2.1 ([#211](https://github.com/Monoradioactivo/aether-cli/issues/211)) ([b6849b3](https://github.com/Monoradioactivo/aether-cli/commit/b6849b3da952d3c0571074cc6a83de45202eaf6d))
+
 ## [0.14.0](https://github.com/Monoradioactivo/aether-cli/compare/v0.13.1...v0.14.0) (2026-11-25)
 
 
