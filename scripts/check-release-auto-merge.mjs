@@ -12,6 +12,7 @@ import {
   hasVerifiedTrailer,
   pickLatestTestConclusion,
   REQUIRED_TEST_CHECK,
+  subjectOf,
 } from "./release-auto-merge-gate.mjs";
 
 const REPO = process.env.GITHUB_REPOSITORY;
@@ -155,6 +156,91 @@ function resolveLabelActor(prNumber) {
   return { labelActorUnread: true };
 }
 
+const SQUASH_SUBJECT_PULL = /\(#([1-9][0-9]*)\)$/;
+const GITHUB_WEB_FLOW_EMAIL = "noreply@github.com";
+
+export function squashPullNumberOf(message) {
+  const match = SQUASH_SUBJECT_PULL.exec(subjectOf(message == null ? "" : message).trim());
+  return match ? Number(match[1]) : null;
+}
+
+export function isGitHubSquashCommit(commit) {
+  return Boolean(
+    commit &&
+      commit.verified === true &&
+      commit.committerEmail === GITHUB_WEB_FLOW_EMAIL &&
+      typeof commit.tree === "string" &&
+      commit.tree.length > 0 &&
+      Array.isArray(commit.parents) &&
+      commit.parents.length === 1 &&
+      typeof commit.parents[0] === "string",
+  );
+}
+
+export function isSquashOfHead(relation, squash) {
+  return Boolean(
+    relation && squash && relation.status === "diverged" && relation.mergeBase === squash.parents[0],
+  );
+}
+
+function readNdjson(args) {
+  const out = gh(args).trim();
+  if (!out) return [];
+  return out
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
+}
+
+function resolveSquashedPullRequest(sha, commit) {
+  const number = squashPullNumberOf(commit && commit.message != null ? commit.message : "");
+  if (number === null) return { missing: true };
+  const squash = ghJson([
+    "api",
+    `repos/${REPO}/git/commits/${sha}`,
+    "--jq",
+    "{tree: .tree.sha, parents: [.parents[].sha], verified: .verification.verified, committerEmail: .committer.email}",
+  ]);
+  if (!squash) return null;
+  if (!isGitHubSquashCommit(squash)) return { missing: true };
+  const pull = ghJson([
+    "api",
+    `repos/${REPO}/pulls/${number}`,
+    "--jq",
+    "{number: .number, merged: (.merged_at != null), base: .base.ref, headSha: .head.sha, labels: [.labels[].name], author: (.user.login // null)}",
+  ]);
+  if (!pull || !Array.isArray(pull.labels)) return null;
+  if (pull.number !== number || pull.merged !== true || pull.base !== "main") return { missing: true };
+  const pullCommits = readNdjson([
+    "api",
+    "--paginate",
+    `repos/${REPO}/pulls/${number}/commits?per_page=100`,
+    "--jq",
+    ".[] | {sha: .sha, tree: .commit.tree.sha}",
+  ]);
+  const finalHeadMatches = pullCommits.some(
+    (head) => head && typeof pull.headSha === "string" && head.sha === pull.headSha && head.tree === squash.tree,
+  );
+  if (!finalHeadMatches) return { missing: true };
+  const heads = pullCommits.filter((head) => head && typeof head.sha === "string" && head.tree === squash.tree);
+  for (const head of heads.reverse()) {
+    const relation = ghJson([
+      "api",
+      `repos/${REPO}/compare/${sha}...${head.sha}`,
+      "--jq",
+      "{status: .status, mergeBase: .merge_base_commit.sha}",
+    ]);
+    if (isSquashOfHead(relation, squash)) {
+      console.error(
+        `commit ${sha.slice(0, 7)} belongs to no pull request; GitHub wrote it as the squash of #${number}, whose commit ${head.sha.slice(0, 7)} has the same tree on the same base`,
+      );
+      return { number, labels: pull.labels, headSha: head.sha, author: pull.author };
+    }
+  }
+  return { missing: true };
+}
+
 const pullRequestCache = new Map();
 function resolvePullRequest(sha, commit) {
   const cacheKey = `${sha}\0${commit && commit.message != null ? String(commit.message) : ""}`;
@@ -167,12 +253,12 @@ function resolvePullRequest(sha, commit) {
       "--jq",
       "[.[] | select(.merged_at != null) | {number: .number, labels: [.labels[].name], headSha: .head.sha, author: (.user.login // null)}]",
     ]);
-    if (!Array.isArray(prs)) {
+    const pr = !Array.isArray(prs) ? null : prs.length === 0 ? resolveSquashedPullRequest(sha, commit) : prs[0];
+    if (pr === null) {
       resolved = null;
-    } else if (prs.length === 0) {
+    } else if (pr.missing) {
       resolved = { missing: true };
     } else {
-      const pr = prs[0];
       const labels = pr.labels;
       const commitHasTrailer = hasVerifiedTrailer(commit && commit.message != null ? commit.message : "");
       const labelVouch = !commitHasTrailer && Array.isArray(labels) && labels.includes(LABEL);
