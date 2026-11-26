@@ -183,6 +183,38 @@ export function isSquashOfHead(relation, squash) {
   );
 }
 
+const DELETED_REF = /^0+$/;
+
+export function headAtTime(events, at) {
+  const cutoff = Date.parse(String(at));
+  if (!Number.isFinite(cutoff) || !Array.isArray(events)) return null;
+  let newestWhen = null;
+  let heads = new Set();
+  for (const event of events) {
+    const when = event ? Date.parse(String(event.timestamp)) : NaN;
+    if (!Number.isFinite(when) || when > cutoff) continue;
+    if (newestWhen === null || when > newestWhen) {
+      newestWhen = when;
+      heads = new Set([event.after]);
+    } else if (when === newestWhen) {
+      heads.add(event.after);
+    }
+  }
+  if (heads.size !== 1) return null;
+  const [head] = heads;
+  if (typeof head !== "string" || DELETED_REF.test(head)) return null;
+  return head;
+}
+
+export function isWithinPullLifetime(pull, at) {
+  const moment = Date.parse(String(at));
+  const opened = pull ? Date.parse(String(pull.createdAt)) : NaN;
+  if (!Number.isFinite(moment) || !Number.isFinite(opened) || opened > moment) return false;
+  if (pull.closedAt == null) return true;
+  const closed = Date.parse(String(pull.closedAt));
+  return Number.isFinite(closed) && moment <= closed;
+}
+
 function readNdjson(args) {
   const out = gh(args).trim();
   if (!out) return [];
@@ -200,7 +232,7 @@ function resolveSquashedPullRequest(sha, commit) {
     "api",
     `repos/${REPO}/git/commits/${sha}`,
     "--jq",
-    "{tree: .tree.sha, parents: [.parents[].sha], verified: .verification.verified, committerEmail: .committer.email}",
+    "{tree: .tree.sha, parents: [.parents[].sha], verified: .verification.verified, committerEmail: .committer.email, committedAt: .committer.date}",
   ]);
   if (!squash) return null;
   if (!isGitHubSquashCommit(squash)) return { missing: true };
@@ -208,37 +240,37 @@ function resolveSquashedPullRequest(sha, commit) {
     "api",
     `repos/${REPO}/pulls/${number}`,
     "--jq",
-    "{number: .number, merged: (.merged_at != null), base: .base.ref, headSha: .head.sha, labels: [.labels[].name], author: (.user.login // null)}",
+    "{number: .number, base: .base.ref, headRef: .head.ref, headRepo: (.head.repo.full_name // null), createdAt: .created_at, closedAt: .closed_at, labels: [.labels[].name], author: (.user.login // null)}",
   ]);
   if (!pull || !Array.isArray(pull.labels)) return null;
-  if (pull.number !== number || pull.merged !== true || pull.base !== "main") return { missing: true };
-  const pullCommits = readNdjson([
+  if (pull.number !== number || pull.base !== "main" || pull.headRepo !== REPO || typeof pull.headRef !== "string") {
+    return { missing: true };
+  }
+  if (!isWithinPullLifetime(pull, squash.committedAt)) return { missing: true };
+  const branchActivity = readNdjson([
     "api",
     "--paginate",
-    `repos/${REPO}/pulls/${number}/commits?per_page=100`,
+    `repos/${REPO}/activity?ref=${encodeURIComponent(`refs/heads/${pull.headRef}`)}&per_page=100`,
     "--jq",
-    ".[] | {sha: .sha, tree: .commit.tree.sha}",
+    ".[] | {timestamp: .timestamp, after: .after}",
   ]);
-  const finalHeadMatches = pullCommits.some(
-    (head) => head && typeof pull.headSha === "string" && head.sha === pull.headSha && head.tree === squash.tree,
+  const head = headAtTime(branchActivity, squash.committedAt);
+  if (head === null) return { missing: true };
+  const headCommit = ghJson(["api", `repos/${REPO}/git/commits/${head}`, "--jq", "{tree: .tree.sha}"]);
+  if (!headCommit) return null;
+  if (headCommit.tree !== squash.tree) return { missing: true };
+  const relation = ghJson([
+    "api",
+    `repos/${REPO}/compare/${sha}...${head}`,
+    "--jq",
+    "{status: .status, mergeBase: .merge_base_commit.sha}",
+  ]);
+  if (!relation) return null;
+  if (!isSquashOfHead(relation, squash)) return { missing: true };
+  console.error(
+    `commit ${sha.slice(0, 7)} belongs to no pull request; GitHub wrote it as the squash of #${number}, whose head ${head.slice(0, 7)} at that moment has the same tree on the same base`,
   );
-  if (!finalHeadMatches) return { missing: true };
-  const heads = pullCommits.filter((head) => head && typeof head.sha === "string" && head.tree === squash.tree);
-  for (const head of heads.reverse()) {
-    const relation = ghJson([
-      "api",
-      `repos/${REPO}/compare/${sha}...${head.sha}`,
-      "--jq",
-      "{status: .status, mergeBase: .merge_base_commit.sha}",
-    ]);
-    if (isSquashOfHead(relation, squash)) {
-      console.error(
-        `commit ${sha.slice(0, 7)} belongs to no pull request; GitHub wrote it as the squash of #${number}, whose commit ${head.sha.slice(0, 7)} has the same tree on the same base`,
-      );
-      return { number, labels: pull.labels, headSha: head.sha, author: pull.author };
-    }
-  }
-  return { missing: true };
+  return { number, labels: pull.labels, headSha: head, author: pull.author };
 }
 
 const pullRequestCache = new Map();
