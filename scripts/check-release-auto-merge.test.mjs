@@ -14,7 +14,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { REQUIRED_TEST_CHECK } from "./release-auto-merge-gate.mjs";
-import { holdCommentMarker } from "./check-release-auto-merge.mjs";
+import {
+  holdCommentMarker,
+  isGitHubSquashCommit,
+  isSquashOfHead,
+  squashPullNumberOf,
+} from "./check-release-auto-merge.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const scriptPath = join(scriptDir, "check-release-auto-merge.mjs");
@@ -31,6 +36,9 @@ const SPAWN_TIMEOUT_MS = 30_000;
 const STUB = [
   "#!/bin/sh",
   'case " $* " in',
+  '  *"/git/commits/"*) printf "%s" "$STUB_SQUASH_COMMIT"; exit 0 ;;',
+  '  *"/compare/"*"...$STUB_SQUASH_DIVERGED_HEAD "*"merge_base_commit"*) printf "%s" "$STUB_SQUASH_COMPARE"; exit 0 ;;',
+  '  *"/compare/"*"merge_base_commit"*) printf "%s" "$STUB_SQUASH_COMPARE_OTHER"; exit 0 ;;',
   '  *"/compare/"*) printf "%s" "$STUB_COMPARE"; exit 0 ;;',
   '  *"/releases/latest"*) printf "%s" "$STUB_LATEST_TAG"; exit 0 ;;',
   '  *"/contents/package.json"*)',
@@ -71,6 +79,7 @@ const STUB = [
   '    printf "%s" "$STUB_EVENTS"',
   "    exit 0",
   "    ;;",
+  '  *"/commits/$STUB_PINNED_CHECK_SHA/check-runs"*) printf "%s" "$STUB_PINNED_CHECK_RUNS"; exit 0 ;;',
   '  *"/check-runs"*)',
   '    if [ "$STUB_CHECK_RUNS_UNEXPECTED" = "1" ]; then',
   '      echo "UNEXPECTED_CHECK_RUNS_CALL" >&2',
@@ -84,6 +93,8 @@ const STUB = [
   "    exit 0",
   "    ;;",
   '  *"/commits/"*"/pulls"*) printf "%s" "$STUB_COMMIT_PULLS"; exit 0 ;;',
+  '  *"/pulls/"*"/commits?"*) printf "%s" "$STUB_SQUASH_PULL_COMMITS"; exit 0 ;;',
+  '  *"/pulls/"*"merged_at"*) printf "%s" "$STUB_SQUASH_PULL"; exit 0 ;;',
   '  *"/pulls/"*)',
   '    if [ "$STUB_RELEASE_PR_FAIL" = "1" ]; then',
   '      echo "stub: refusing the release pull request read" >&2',
@@ -152,6 +163,14 @@ function runGate({ args = ["0", BASE_TAG], env = {}, repo = REPO } = {}) {
     STUB_COMPARE: "",
     STUB_LATEST_TAG: "",
     STUB_COMMIT_PULLS: "",
+    STUB_SQUASH_COMMIT: "",
+    STUB_SQUASH_PULL: "",
+    STUB_SQUASH_PULL_COMMITS: "",
+    STUB_SQUASH_COMPARE: "",
+    STUB_SQUASH_DIVERGED_HEAD: "",
+    STUB_SQUASH_COMPARE_OTHER: "",
+    STUB_PINNED_CHECK_SHA: "",
+    STUB_PINNED_CHECK_RUNS: "",
     STUB_EVENTS: "",
     STUB_CHECK_RUNS: SUCCESSFUL_TEST_CHECK,
     STUB_RELEASE_PR: RELEASE_PR_REFS,
@@ -517,6 +536,189 @@ test("a commit belonging to no merged pull request is refused", () => {
   assert.match(run.verdict.reasons[0], /carries no Brief-Verified trailer and belongs to no pull request/);
 });
 
+const SQUASH_SHA = "962cee93413532128dcdc347b720011d430cca94";
+const SQUASH_PARENT = "28db0e6fa000000000000000000000000000beef";
+const SQUASH_TREE = "f695ab75230be548e1a01f8bcb8a298fe967fcd0";
+const SQUASHED_HEAD = "93c5944aa000000000000000000000000000cafe";
+const SQUASH_MESSAGE = "feat(api): dry-run routes (#613)\n\nBrief-Verified: server-rollback-dry-run-release-audit";
+
+function testCheckConcluded(conclusion) {
+  return JSON.stringify({
+    total: 1,
+    runs: [
+      {
+        name: REQUIRED_TEST_CHECK,
+        app: "github-actions",
+        status: "completed",
+        conclusion,
+        completed_at: "2026-11-25T15:40:00Z",
+      },
+    ],
+  });
+}
+
+const SQUASH_BRANCH_UPDATE = "25abf2e6951872892a244d48cb45fa1ea7d8a1cd";
+
+function squashPull(overrides = {}) {
+  return JSON.stringify({
+    number: 613,
+    merged: true,
+    base: "main",
+    headSha: SQUASH_BRANCH_UPDATE,
+    labels: [],
+    author: "Monoradioactivo",
+    ...overrides,
+  });
+}
+
+function unlinkedSquash(overrides = {}) {
+  return {
+    STUB_CHECK_RUNS: testCheckConcluded("failure"),
+    STUB_PINNED_CHECK_SHA: SQUASHED_HEAD,
+    STUB_PINNED_CHECK_RUNS: testCheckConcluded("success"),
+    STUB_COMPARE: compareBody([{ sha: SQUASH_SHA, message: SQUASH_MESSAGE }]),
+    STUB_COMMIT_PULLS: "[]",
+    STUB_SQUASH_COMMIT: JSON.stringify({
+      tree: SQUASH_TREE,
+      parents: [SQUASH_PARENT],
+      verified: true,
+      committerEmail: "noreply@github.com",
+    }),
+    STUB_SQUASH_PULL: squashPull(),
+    STUB_SQUASH_PULL_COMMITS: ndjson([
+      { sha: "7cbdbb0aa000000000000000000000000000f00d", tree: "0000000000000000000000000000000000000001" },
+      { sha: SQUASHED_HEAD, tree: SQUASH_TREE },
+      { sha: SQUASH_BRANCH_UPDATE, tree: SQUASH_TREE },
+    ]),
+    STUB_SQUASH_DIVERGED_HEAD: SQUASHED_HEAD,
+    STUB_SQUASH_COMPARE: JSON.stringify({ status: "diverged", mergeBase: SQUASH_PARENT }),
+    STUB_SQUASH_COMPARE_OTHER: JSON.stringify({ status: "ahead", mergeBase: SQUASH_SHA }),
+    ...overrides,
+  };
+}
+
+test("GitHub's squash of a merged pull request it left unlinked is judged as that pull request", () => {
+  const run = runGate({ env: unlinkedSquash() });
+
+  assert.equal(run.verdict.ok, true, run.stdout);
+  assert.deepEqual(run.verdict.commits[0], {
+    sha: SQUASH_SHA.slice(0, 7),
+    pr: 613,
+    subject: "feat(api): dry-run routes (#613)",
+    blessed: true,
+    via: "Brief-Verified trailer",
+  });
+  assert.match(run.stderr, /GitHub wrote it as the squash of #613, whose commit 93c5944 has the same tree on the same base/);
+});
+
+test("an unlinked squash whose matching head failed its test check is refused", () => {
+  const run = runGate({ env: unlinkedSquash({ STUB_PINNED_CHECK_RUNS: testCheckConcluded("failure") }) });
+
+  assert.equal(run.verdict.ok, false);
+  assert.match(run.verdict.reasons[0], /#613 \(962cee9\) has no successful .* check \(conclusion: failure\)/);
+});
+
+test("the test check of an unlinked squash is read on the newest pull request commit with its tree", () => {
+  const rerunHead = "a1b2c3d4e5f60000000000000000000000000000";
+  const run = runGate({
+    env: unlinkedSquash({
+      STUB_SQUASH_PULL: squashPull({ headSha: rerunHead }),
+      STUB_SQUASH_PULL_COMMITS: ndjson([
+        { sha: SQUASHED_HEAD, tree: SQUASH_TREE },
+        { sha: rerunHead, tree: SQUASH_TREE },
+      ]),
+      STUB_SQUASH_COMPARE_OTHER: JSON.stringify({ status: "diverged", mergeBase: SQUASH_PARENT }),
+      STUB_PINNED_CHECK_SHA: rerunHead,
+    }),
+  });
+
+  assert.equal(run.verdict.ok, true, run.stdout);
+  assert.match(run.stderr, /whose commit a1b2c3d has the same tree on the same base/);
+});
+
+test("an unlinked squash vouched by its pull request's label needs an allowed label actor", () => {
+  const unlabelledMessage = "chore(deps): bump pg to 8.16.4 (#613)";
+  const labelled = (actor) =>
+    runGate({
+      env: unlinkedSquash({
+        STUB_COMPARE: compareBody([{ sha: SQUASH_SHA, message: unlabelledMessage }]),
+        STUB_SQUASH_PULL: squashPull({ labels: ["brief-verified"], author: "renovate[bot]" }),
+        STUB_EVENTS: ndjson([{ actor, at: "2026-11-25T15:30:00Z" }]),
+      }),
+    });
+
+  assert.equal(labelled("aether-release-vouch[bot]").verdict.ok, true);
+  const refused = labelled("someone-else");
+  assert.equal(refused.verdict.ok, false);
+  assert.match(refused.verdict.reasons[0], /applied by someone-else, whose vouch this gate does not accept/);
+});
+
+const UNLINKED_REFUSALS = [
+  ["a subject naming no pull request", { STUB_COMPARE: compareBody([{ sha: SQUASH_SHA, message: "feat(api): dry-run routes\n\nBrief-Verified: x" }]) }],
+  ["an unsigned commit", { STUB_SQUASH_COMMIT: JSON.stringify({ tree: SQUASH_TREE, parents: [SQUASH_PARENT], verified: false, committerEmail: "noreply@github.com" }) }],
+  ["a commit someone else committed", { STUB_SQUASH_COMMIT: JSON.stringify({ tree: SQUASH_TREE, parents: [SQUASH_PARENT], verified: true, committerEmail: "someone@example.com" }) }],
+  ["a merge commit", { STUB_SQUASH_COMMIT: JSON.stringify({ tree: SQUASH_TREE, parents: [SQUASH_PARENT, SQUASHED_HEAD], verified: true, committerEmail: "noreply@github.com" }) }],
+  ["a pull request that was never merged", { STUB_SQUASH_PULL: squashPull({ merged: false }) }],
+  ["a pull request merged into another branch", { STUB_SQUASH_PULL: squashPull({ base: "develop" }) }],
+  ["a pull request read that answers another number", { STUB_SQUASH_PULL: squashPull({ number: 612 }) }],
+  ["a pull request whose final head has another tree", { STUB_SQUASH_PULL_COMMITS: ndjson([{ sha: SQUASHED_HEAD, tree: SQUASH_TREE }, { sha: SQUASH_BRANCH_UPDATE, tree: "0000000000000000000000000000000000000003" }]) }],
+  ["a pull request whose final head is not among its listed commits", { STUB_SQUASH_PULL: squashPull({ headSha: "4444444444444444444444444444444444444444" }) }],
+  ["no pull request commit with the same tree", { STUB_SQUASH_PULL_COMMITS: ndjson([{ sha: SQUASHED_HEAD, tree: "0000000000000000000000000000000000000002" }]) }],
+  ["a matching head that already contains the commit", { STUB_SQUASH_COMPARE: JSON.stringify({ status: "ahead", mergeBase: SQUASH_SHA }) }],
+  ["a matching head on another base", { STUB_SQUASH_COMPARE: JSON.stringify({ status: "diverged", mergeBase: "1111111111111111111111111111111111111111" }) }],
+];
+
+for (const [shape, overrides] of UNLINKED_REFUSALS) {
+  test(`an unlinked commit is still refused as belonging to no pull request when it is ${shape}`, () => {
+    const run = runGate({
+      env: unlinkedSquash({ STUB_CHECK_RUNS_UNEXPECTED: "1", STUB_PINNED_CHECK_SHA: "", ...overrides }),
+    });
+
+    assert.equal(run.verdict.ok, false);
+    assert.equal(run.verdict.commits[0].pr, null);
+    assert.match(run.verdict.reasons[0], /belongs to no pull request/);
+    assert.doesNotMatch(run.stderr, /UNEXPECTED_CHECK_RUNS_CALL/);
+  });
+}
+
+for (const [read, overrides] of [
+  ["the commit", { STUB_SQUASH_COMMIT: "" }],
+  ["the pull request", { STUB_SQUASH_PULL: "" }],
+]) {
+  test(`an unlinked squash is unresolved, never accepted, when ${read} cannot be read`, () => {
+    const run = runGate({ env: unlinkedSquash(overrides) });
+
+    assert.equal(run.verdict.ok, false);
+    assert.match(run.verdict.reasons[0], /could not establish whether 962cee9 was verified/);
+  });
+}
+
+test("the squash pull request number is the one the subject ends with", () => {
+  assert.equal(squashPullNumberOf("feat(api): x (#613)\n\nbody (#1)"), 613);
+  assert.equal(squashPullNumberOf("feat(api): x (#613) "), 613);
+  assert.equal(squashPullNumberOf("feat(api): x (#613) and more"), null);
+  assert.equal(squashPullNumberOf("feat(api): x (#0)"), null);
+  assert.equal(squashPullNumberOf("feat(api): x"), null);
+  assert.equal(squashPullNumberOf(null), null);
+});
+
+test("only a single-parent commit GitHub signed counts as its squash", () => {
+  const signed = { tree: SQUASH_TREE, parents: [SQUASH_PARENT], verified: true, committerEmail: "noreply@github.com" };
+  assert.equal(isGitHubSquashCommit(signed), true);
+  assert.equal(isGitHubSquashCommit({ ...signed, verified: "true" }), false);
+  assert.equal(isGitHubSquashCommit({ ...signed, tree: "" }), false);
+  assert.equal(isGitHubSquashCommit({ ...signed, parents: [] }), false);
+  assert.equal(isGitHubSquashCommit(null), false);
+});
+
+test("a head matches the squash only when it diverged from it at the squash's parent", () => {
+  const squash = { parents: [SQUASH_PARENT] };
+  assert.equal(isSquashOfHead({ status: "diverged", mergeBase: SQUASH_PARENT }, squash), true);
+  assert.equal(isSquashOfHead({ status: "identical", mergeBase: SQUASH_PARENT }, squash), false);
+  assert.equal(isSquashOfHead({ status: "behind", mergeBase: SQUASH_PARENT }, squash), false);
+  assert.equal(isSquashOfHead(null, squash), false);
+});
+
 test("the base tag is read from the latest release when no tag argument is given", () => {
   const run = runGate({
     args: [],
@@ -764,7 +966,7 @@ test("importing the module runs no gate and writes no output", () => {
   assert.equal(result.status, 0);
   assert.match(
     result.stdout,
-    /IMPORTED \["HOLD_COMMENT_MARKER_PREFIX","contentsFetchFailedAsMissing","holdCommentMarker","versionFromPayloads"\]/,
+    /IMPORTED \["HOLD_COMMENT_MARKER_PREFIX","contentsFetchFailedAsMissing","holdCommentMarker","isGitHubSquashCommit","isSquashOfHead","squashPullNumberOf","versionFromPayloads"\]/,
   );
   assert.doesNotMatch(result.stdout, /"ok":/);
   assert.equal(readFileSync(output, "utf8"), "");
