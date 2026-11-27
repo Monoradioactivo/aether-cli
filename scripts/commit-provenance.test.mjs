@@ -1013,7 +1013,8 @@ test("the title the check looks for is the one the workflow renders", () => {
   assert.match(workflow, /head\.repo\.full_name == github\.repository && 'provenance'/);
   assert.match(workflow, /actions\/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510/);
   assert.match(workflow, /secrets\.PROVENANCE_APP_PRIVATE_KEY/);
-  assert.match(workflow, /vars\.PROVENANCE_APP_ID/);
+  assert.match(workflow, /^ {10}client-id: Iv23lilHrzzJAz4VtEYA$/m);
+  assert.doesNotMatch(workflow, /app-id:/);
 });
 
 test("standing vouches read pull_request_target runs only", () => {
