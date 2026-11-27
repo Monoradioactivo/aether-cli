@@ -127,3 +127,34 @@ jobs:
         env:
           TARBALL: ${{ needs.build.outputs.tarball }}
         run: npm publish "./$TARBALL" --provenance --access public --ignore-scripts
+
+  release-alert:
+    name: Alert on a failed release
+    needs: [release-please, build, publish]
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Post to the ops channel
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+          RELEASE_CREATED: ${{ needs.release-please.outputs.release_created }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_CREATED" = "true" ]; then
+            text="Release $TAG_NAME of $REPOSITORY failed: $RUN_URL"
+          else
+            text="Release Please failed on $REPOSITORY before reporting a release; check for a tag without its package: $RUN_URL"
+          fi
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "::error::DISCORD_OPS_WEBHOOK_URL is not set; $text"
+            exit 1
+          fi
+          payload=$(jq -n --arg text "$text" '{content: $text, allowed_mentions: {parse: []}}')
+          curl --fail --silent --show-error --max-time 20 --output /dev/null --write-out 'Discord answered %{http_code}\n' \
+            -H 'Content-Type: application/json' -H 'User-Agent: AetherOps/1.0' \
+            --data "$payload" "${WEBHOOK_URL}?wait=true"
