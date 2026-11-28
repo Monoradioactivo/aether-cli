@@ -57,9 +57,10 @@ Renovate branches start with `chore/renovate-` and follow the policy like any ot
 
 | Name                      | Kind     | Purpose                                                                                   |
 |---------------------------|----------|-------------------------------------------------------------------------------------------|
-| `RELEASE_BOT_APP_ID`      | secret   | App ID of the release bot, used to mint its token in the release workflows                |
-| `RELEASE_BOT_PRIVATE_KEY` | secret   | Private key of the release bot App                                                        |
+| `RELEASE_BOT_PRIVATE_KEY` | secret   | Private key of the release bot App, used to mint its token in the release workflows       |
 | `RELEASE_AUTO_MERGE_ARM`  | variable | `true` lets `auto-merge-release.yml` arm auto-merge on a release PR that passes the gate  |
+
+The workflows name the release bot by its Client ID, `Iv23lio9T0bHLSDEujzR`, which is public and needs no secret.
 
 No npm token is stored in the repository. Publishing uses OIDC trusted publishing (see below).
 
@@ -108,8 +109,18 @@ Releases come from release-please. Nobody pushes version tags by hand.
    run on the head. The label has no other purpose. If the recheck step itself fails, the run logs a warning without
    disarming, and the next run tries again. The `Release auto-merge gate` check runs on every pull request and passes
    at once on the ones that are not release PRs.
-3. Merging the release PR creates the tag and the GitHub release. The `Publish to npm` job then runs the tests, builds,
-   checks that the tag matches `package.json`, and publishes with `npm publish --provenance --access public`.
+3. Merging the release PR creates the tag and the GitHub release. The `Build the npm package` job then runs the tests,
+   builds, checks that the tag matches `package.json` and packs the tarball, and `Publish to npm` checks the packed
+   version and publishes it with `npm publish --provenance --access public`.
+4. When any job of the run fails or is cancelled, a job timeout included, `release-alert` posts the repository, the
+   tag and the run URL to the ops Discord channel through `DISCORD_OPS_WEBHOOK_URL`. When `Release PR / Tag` failed
+   before reporting a release, the post says so instead of naming a tag. The same job is in `aetherpush-sdk` and
+   `aether-expo-plugin`; `aetherpush-deploy-action` has its own `alert` job.
+
+The tag exists before the build and publish jobs run, and `v*` tags cannot be moved. Re-run only the failed jobs of
+that run: `gh run rerun <run id> --failed -R Monoradioactivo/<repository>`. A full re-run finds no new release,
+skips build and publish, and ends green with nothing published. A green run does not prove a publish, so a release is
+done only when `npm view <package>@<version> version` answers that version.
 
 ### How the gate's runs are kept apart
 
