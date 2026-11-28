@@ -53,7 +53,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@aetherpush/mcp": "0.2.1",
+    "@aetherpush/mcp": "0.3.0",
     "backslash": "^0.2.0",
     "chalk": "^4.1.2",
     "cli-table": "^0.3.11",
