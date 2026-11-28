@@ -68,7 +68,7 @@ jobs:
         if: steps.scope.outputs.applies == 'true'
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          client-id: Iv23lio9T0bHLSDEujzR
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
       - name: Resolve the release pull request
